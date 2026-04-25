@@ -8,8 +8,8 @@
   <meta name="theme-color" content="#1a3a5c">
   <title>電子日報 - One's Place</title>
   <link rel="manifest" href="manifest.json">
-  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.20.3/dist/xlsx.full.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -826,8 +826,8 @@ function initMsal() {
   });
 
   msalInstance.initialize().then(() => {
-    // Handle redirect after login
     msalInstance.handleRedirectPromise().then(async (resp) => {
+      if (window._clearLoadTimeout) window._clearLoadTimeout();
       if (resp && resp.account) {
         state.account = resp.account;
         await afterLogin();
@@ -841,10 +841,16 @@ function initMsal() {
         }
       }
     }).catch(err => {
+      if (window._clearLoadTimeout) window._clearLoadTimeout();
       console.error(err);
       showScreen('login');
       showError('login-error', 'ログインエラー: ' + err.message);
     });
+  }).catch(err => {
+    if (window._clearLoadTimeout) window._clearLoadTimeout();
+    console.error('MSAL initialize error:', err);
+    showScreen('login');
+    showError('login-error', '初期化エラー: ' + err.message);
   });
 }
 
@@ -1608,11 +1614,29 @@ function escHtml(str) {
 document.addEventListener('DOMContentLoaded', () => {
   showScreen('loading');
 
-  // Check if clientId is configured
+  // 10秒でタイムアウトしてログイン画面を表示
+  const loadTimeout = setTimeout(() => {
+    console.warn('Loading timeout — showing login screen');
+    showScreen('login');
+  }, 10000);
+
+  window._clearLoadTimeout = () => clearTimeout(loadTimeout);
+
   if (!CONFIG.clientId || CONFIG.clientId === 'YOUR_CLIENT_ID_HERE') {
+    clearTimeout(loadTimeout);
     showScreen('login');
     document.getElementById('login-error').textContent =
       '管理者設定が必要です。index.html内のCONFIG.clientIdを設定してください（README.md参照）';
+    document.getElementById('login-error').classList.remove('hidden');
+    return;
+  }
+
+  // MSALライブラリの読み込み確認
+  if (typeof msal === 'undefined') {
+    clearTimeout(loadTimeout);
+    showScreen('login');
+    document.getElementById('login-error').textContent =
+      'ライブラリの読み込みに失敗しました。ページを再読み込みしてください。';
     document.getElementById('login-error').classList.remove('hidden');
     return;
   }

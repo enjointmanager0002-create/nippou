@@ -1,0 +1,1632 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#1a3a5c">
+  <title>電子日報 - One's Place</title>
+  <link rel="manifest" href="manifest.json">
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary: #1a3a5c;
+      --primary-light: #2a5a8c;
+      --accent: #0078d4;
+      --success: #107c10;
+      --danger: #c50f1f;
+      --warning: #f7630c;
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --border: #d1d5db;
+      --text: #1a1a2e;
+      --text-muted: #6b7280;
+      --radius: 12px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ===== LOGIN SCREEN ===== */
+    #screen-login {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      background: linear-gradient(160deg, var(--primary) 0%, #0d2240 100%);
+    }
+
+    .login-logo {
+      width: 80px;
+      height: 80px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .login-logo svg { width: 48px; height: 48px; fill: white; }
+
+    .login-title {
+      color: white;
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      text-align: center;
+    }
+
+    .login-subtitle {
+      color: rgba(255,255,255,0.7);
+      font-size: 14px;
+      margin-bottom: 40px;
+      text-align: center;
+    }
+
+    .login-card {
+      background: white;
+      border-radius: 16px;
+      padding: 32px 24px;
+      width: 100%;
+      max-width: 360px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+
+    .btn-ms-login {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 100%;
+      padding: 14px 20px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-ms-login:hover { background: #006cbd; }
+    .btn-ms-login svg { width: 24px; height: 24px; flex-shrink: 0; }
+
+    .login-note {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-align: center;
+      margin-top: 16px;
+    }
+
+    /* ===== LOADING ===== */
+    #screen-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      gap: 16px;
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 4px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-text { color: var(--text-muted); font-size: 14px; }
+
+    /* ===== MAIN APP ===== */
+    #screen-main { display: flex; flex-direction: column; min-height: 100vh; }
+
+    .app-header {
+      background: var(--primary);
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+
+    .app-header-title { font-size: 18px; font-weight: 700; }
+
+    .app-header-user {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: rgba(255,255,255,0.85);
+    }
+
+    .btn-logout {
+      background: rgba(255,255,255,0.15);
+      border: none;
+      color: white;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .btn-logout:hover { background: rgba(255,255,255,0.25); }
+
+    .app-content {
+      padding: 16px;
+      flex: 1;
+      max-width: 640px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* ===== CARDS ===== */
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow);
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--primary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 2px solid var(--primary);
+    }
+
+    /* ===== FORM ELEMENTS ===== */
+    .form-group { margin-bottom: 14px; }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .form-label .required {
+      color: var(--danger);
+      margin-left: 3px;
+    }
+
+    .form-input,
+    .form-select,
+    .form-textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 16px;
+      font-family: inherit;
+      color: var(--text);
+      background: white;
+      transition: border-color 0.2s;
+      -webkit-appearance: none;
+    }
+
+    .form-input:focus,
+    .form-select:focus,
+    .form-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.15);
+    }
+
+    .form-textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .form-select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24'%3E%3Cpath fill='%236b7280' d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 36px;
+    }
+
+    /* ===== TOGGLE BUTTONS ===== */
+    .toggle-group {
+      display: flex;
+      gap: 8px;
+    }
+
+    .toggle-btn {
+      flex: 1;
+      padding: 12px;
+      border: 2px solid var(--border);
+      border-radius: 8px;
+      background: white;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+      color: var(--text-muted);
+    }
+
+    .toggle-btn.active {
+      border-color: var(--accent);
+      background: #e6f2fa;
+      color: var(--accent);
+    }
+
+    .toggle-btn.active-yes {
+      border-color: var(--success);
+      background: #e6f2e6;
+      color: var(--success);
+    }
+
+    .toggle-btn.active-no {
+      border-color: var(--text-muted);
+      background: #f0f0f0;
+      color: var(--text-muted);
+    }
+
+    /* ===== TIME SLOT SELECTOR ===== */
+    .time-slot-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .time-slot-btn {
+      border: 2px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 8px;
+      background: white;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.15s;
+    }
+
+    .time-slot-btn .slot-icon { font-size: 22px; display: block; margin-bottom: 4px; }
+    .time-slot-btn .slot-name { font-size: 13px; font-weight: 700; display: block; color: var(--text); }
+    .time-slot-btn .slot-time { font-size: 11px; color: var(--text-muted); display: block; margin-top: 2px; }
+
+    .time-slot-btn.active {
+      border-color: var(--accent);
+      background: #e6f2fa;
+    }
+    .time-slot-btn.active .slot-name { color: var(--accent); }
+
+    /* ===== RESIDENT ACCORDION ===== */
+    .resident-block {
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 10px;
+      overflow: hidden;
+    }
+
+    .resident-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: #f8f9fa;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .resident-header:hover { background: #edf2f7; }
+
+    .resident-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .resident-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .resident-badge {
+      font-size: 11px;
+      padding: 3px 8px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+
+    .badge-present { background: #dcf5dc; color: var(--success); }
+    .badge-absent { background: #f0f0f0; color: var(--text-muted); }
+    .badge-abnormal { background: #fce8e8; color: var(--danger); }
+
+    .resident-chevron {
+      transition: transform 0.2s;
+      color: var(--text-muted);
+    }
+
+    .resident-block.open .resident-chevron { transform: rotate(180deg); }
+
+    .resident-body {
+      display: none;
+      padding: 16px;
+      border-top: 1.5px solid var(--border);
+    }
+
+    .resident-block.open .resident-body { display: block; }
+
+    /* ===== ACTION BUTTONS ===== */
+    .btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      padding: 16px;
+      border: none;
+      border-radius: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+    }
+
+    .btn-primary:hover { background: #006cbd; }
+    .btn-primary:active { transform: scale(0.98); }
+
+    .btn-secondary {
+      background: white;
+      color: var(--text);
+      border: 1.5px solid var(--border);
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: white;
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: white;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 8px; }
+    .btn-row .btn { flex: 1; }
+
+    /* ===== SUCCESS OVERLAY ===== */
+    #screen-success {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .success-icon {
+      width: 80px;
+      height: 80px;
+      background: var(--success);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .success-icon svg { width: 40px; height: 40px; fill: white; }
+    .success-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+    .success-detail { font-size: 14px; color: var(--text-muted); margin-bottom: 32px; }
+
+    /* ===== SETTINGS ===== */
+    #screen-settings { min-height: 100vh; }
+
+    .settings-header {
+      background: var(--primary);
+      color: white;
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .settings-back {
+      background: none;
+      border: none;
+      color: white;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .settings-content { padding: 16px; max-width: 640px; margin: 0 auto; }
+
+    .resident-list-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .resident-list-item:last-child { border-bottom: none; }
+
+    .resident-list-input {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: 15px;
+    }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--danger);
+      padding: 8px;
+      font-size: 18px;
+    }
+
+    .btn-add-resident {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px;
+      background: #e6f2fa;
+      border: 1.5px dashed var(--accent);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 8px;
+    }
+
+    /* ===== CONFIG BANNER ===== */
+    .config-banner {
+      background: #fff3cd;
+      border: 1.5px solid #ffc107;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .config-banner-title { font-size: 14px; font-weight: 700; color: #856404; margin-bottom: 4px; }
+    .config-banner-text { font-size: 13px; color: #856404; }
+
+    /* ===== DIVIDER ===== */
+    .section-divider {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      padding: 10px 0 4px;
+    }
+
+    /* ===== TOAST ===== */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #333;
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s;
+      white-space: nowrap;
+    }
+
+    .toast.show { opacity: 1; }
+    .toast.error { background: var(--danger); }
+    .toast.success { background: var(--success); }
+
+    /* ===== ERROR MESSAGE ===== */
+    .error-msg {
+      background: #fce8e8;
+      border: 1.5px solid #f5c6c6;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 13px;
+      color: var(--danger);
+      margin-bottom: 12px;
+    }
+
+    /* ===== HIDDEN ===== */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<!-- LOADING SCREEN -->
+<div id="screen-loading">
+  <div class="spinner"></div>
+  <span class="loading-text" id="loading-text">読み込み中...</span>
+</div>
+
+<!-- LOGIN SCREEN -->
+<div id="screen-login" class="hidden">
+  <div class="login-logo">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/>
+    </svg>
+  </div>
+  <div class="login-title">電子日報</div>
+  <div class="login-subtitle">One's Place グループホーム</div>
+  <div class="login-card">
+    <div id="login-error" class="error-msg hidden"></div>
+    <button class="btn-ms-login" onclick="login()">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path fill="#f25022" d="M11.5 11.5H2V2h9.5z"/>
+        <path fill="#7fba00" d="M22 11.5h-9.5V2H22z"/>
+        <path fill="#00a4ef" d="M11.5 22H2v-9.5h9.5z"/>
+        <path fill="#ffb900" d="M22 22h-9.5v-9.5H22z"/>
+      </svg>
+      Microsoftアカウントでログイン
+    </button>
+    <div class="login-note">組織または個人のMicrosoftアカウントでログインしてください</div>
+  </div>
+</div>
+
+<!-- MAIN SCREEN -->
+<div id="screen-main" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">電子日報</div>
+    <div class="app-header-user">
+      <span id="user-name">...</span>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
+    </div>
+  </div>
+
+  <div class="app-content">
+    <div id="main-config-banner" class="config-banner hidden">
+      <div class="config-banner-title">初回設定が必要です</div>
+      <div class="config-banner-text">「設定」から利用者の氏名を登録してください。</div>
+    </div>
+
+    <!-- Basic Info Card -->
+    <div class="card">
+      <div class="card-title">基本情報</div>
+
+      <div class="form-group">
+        <label class="form-label">報告日<span class="required">*</span></label>
+        <input type="date" id="input-date" class="form-input" required>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">時間帯<span class="required">*</span></label>
+        <div class="time-slot-grid">
+          <button class="time-slot-btn" onclick="selectTimeSlot('早朝')">
+            <span class="slot-icon">🌅</span>
+            <span class="slot-name">早朝</span>
+            <span class="slot-time">6:00〜9:00</span>
+          </button>
+          <button class="time-slot-btn" onclick="selectTimeSlot('日中')">
+            <span class="slot-icon">☀️</span>
+            <span class="slot-name">日中</span>
+            <span class="slot-time">9:00〜22:00</span>
+          </button>
+          <button class="time-slot-btn" onclick="selectTimeSlot('夜間')">
+            <span class="slot-icon">🌙</span>
+            <span class="slot-name">夜間</span>
+            <span class="slot-time">22:00〜6:00</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Staff Card -->
+    <div class="card" id="card-staff">
+      <div class="card-title">担当職員情報</div>
+
+      <div class="form-group">
+        <label class="form-label">担当職員氏名<span class="required">*</span></label>
+        <input type="text" id="input-staff-name" class="form-input" placeholder="氏名を入力" autocomplete="name">
+      </div>
+
+      <div id="group-kinmu" class="form-group hidden">
+        <label class="form-label">勤務体系</label>
+        <select id="input-kinmu" class="form-select">
+          <option value="">選択してください</option>
+          <option value="日勤">日勤</option>
+          <option value="早番">早番</option>
+          <option value="遅番">遅番</option>
+          <option value="夜勤">夜勤</option>
+          <option value="当直">当直</option>
+          <option value="その他">その他</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">職員食事</label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="toggle-staff-meal-yes" onclick="toggleSelect('staff-meal', '有')">有</button>
+          <button class="toggle-btn" id="toggle-staff-meal-no" onclick="toggleSelect('staff-meal', '無')">無</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Residents Card -->
+    <div class="card" id="card-residents">
+      <div class="card-title">利用者別記録</div>
+      <div id="residents-container"></div>
+    </div>
+
+    <!-- Submit buttons -->
+    <div class="btn-row" id="submit-area">
+      <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
+      <button class="btn btn-primary" id="btn-submit" onclick="submitForm()" disabled>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+        送信する
+      </button>
+    </div>
+
+    <div style="height:32px"></div>
+  </div>
+</div>
+
+<!-- SUCCESS SCREEN -->
+<div id="screen-success" class="hidden">
+  <div class="success-icon">
+    <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+  </div>
+  <div class="success-title">送信完了</div>
+  <div class="success-detail" id="success-detail">日報が保存されました</div>
+  <button class="btn btn-primary" style="max-width:280px" onclick="goToNextEntry()">続けて入力する</button>
+  <div style="margin-top:12px">
+    <button class="btn btn-secondary" style="max-width:280px" onclick="showScreen('main')">メインに戻る</button>
+  </div>
+</div>
+
+<!-- SETTINGS SCREEN -->
+<div id="screen-settings" class="hidden">
+  <div class="settings-header">
+    <button class="settings-back" onclick="showScreen('main')">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="white"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+    </button>
+    <span style="font-size:18px;font-weight:700;color:white">設定</span>
+  </div>
+  <div class="settings-content">
+
+    <div class="card">
+      <div class="card-title">アプリ情報</div>
+      <div class="form-group">
+        <label class="form-label">ホーム名</label>
+        <input type="text" id="setting-home-name" class="form-input" placeholder="例：下豊岡">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">利用者名登録</div>
+      <div id="resident-name-list"></div>
+      <button class="btn-add-resident" onclick="addResidentField()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        利用者を追加
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">OneDrive連携</div>
+      <div id="excel-status" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">確認中...</div>
+      <button class="btn btn-secondary" onclick="resetExcelFile()">データファイルを再作成</button>
+    </div>
+
+    <div class="btn-row" style="margin-top:8px">
+      <button class="btn btn-primary" onclick="saveSettings()">保存して戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ==============================
+// CONFIGURATION — AzureアプリIDをここに設定
+// ==============================
+const CONFIG = {
+  // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
+  // 設定方法は同梱の README.md を参照
+  clientId: '4fd40059-1485-4aab-9eb3-bda92a0797b2',
+
+  authority: 'https://login.microsoftonline.com/common',
+  redirectUri: location.origin + (location.pathname.endsWith('index.html') ? location.pathname : location.pathname.replace(/\/?$/, '/index.html')),
+  scopes: ['Files.ReadWrite', 'User.Read'],
+
+  // OneDriveに保存するExcelファイルのパス（変更不要）
+  excelFolderName: '電子日報データ',
+  excelFileName: '日報記録.xlsx',
+
+  // テーブル名
+  tableName: '日報テーブル',
+  sheetName: '日報',
+
+  // テーブルのヘッダー列
+  headers: [
+    '送信日時', '報告日', 'ホーム名', '利用者名', '時間帯',
+    '担当職員名', '勤務体系', '職員食事', '利用の有無',
+    '異常の有無', '体調確認時間', '体調確認方法', '支援内容',
+    '食事内容', '昼食準備', '活動内容', '連携及び調整',
+    '外泊', '夜間支援', '巡回時間', '備考'
+  ]
+};
+
+// ==============================
+// STATE
+// ==============================
+let state = {
+  account: null,
+  token: null,
+  excelFileId: null,
+  timeSlot: null,
+  staffMeal: null,
+  residentData: {},  // { name: { riyoumu, ijo, taichojikan, ... } }
+};
+
+// ==============================
+// MSAL SETUP
+// ==============================
+let msalInstance;
+
+function initMsal() {
+  if (!CONFIG.clientId || CONFIG.clientId === 'YOUR_CLIENT_ID_HERE') {
+    showScreen('login');
+    document.getElementById('login-error').textContent =
+      '管理者設定が必要です：index.htmlのCONFIG.clientIdにAzureアプリIDを設定してください（README.md参照）';
+    document.getElementById('login-error').classList.remove('hidden');
+    return;
+  }
+
+  msalInstance = new msal.PublicClientApplication({
+    auth: {
+      clientId: CONFIG.clientId,
+      authority: CONFIG.authority,
+      redirectUri: CONFIG.redirectUri,
+    },
+    cache: { cacheLocation: 'localStorage' },
+    system: { loggerOptions: { logLevel: msal.LogLevel.Warning } }
+  });
+
+  msalInstance.initialize().then(() => {
+    // Handle redirect after login
+    msalInstance.handleRedirectPromise().then(async (resp) => {
+      if (resp && resp.account) {
+        state.account = resp.account;
+        await afterLogin();
+      } else {
+        const accounts = msalInstance.getAllAccounts();
+        if (accounts.length > 0) {
+          state.account = accounts[0];
+          await afterLogin();
+        } else {
+          showScreen('login');
+        }
+      }
+    }).catch(err => {
+      console.error(err);
+      showScreen('login');
+      showError('login-error', 'ログインエラー: ' + err.message);
+    });
+  });
+}
+
+async function login() {
+  if (!msalInstance) { initMsal(); return; }
+  await msalInstance.loginRedirect({ scopes: CONFIG.scopes });
+}
+
+async function logout() {
+  if (msalInstance) await msalInstance.logoutRedirect();
+}
+
+async function getToken() {
+  try {
+    const res = await msalInstance.acquireTokenSilent({
+      scopes: CONFIG.scopes,
+      account: state.account,
+    });
+    return res.accessToken;
+  } catch {
+    await msalInstance.acquireTokenRedirect({ scopes: CONFIG.scopes });
+    return null;
+  }
+}
+
+async function afterLogin() {
+  setLoading('OneDriveに接続中...');
+  try {
+    state.token = await getToken();
+    document.getElementById('user-name').textContent = state.account.name || state.account.username;
+    await initExcelFile();
+    loadSettings();
+    initForm();
+    showScreen('main');
+  } catch (err) {
+    console.error(err);
+    showScreen('login');
+    showError('login-error', '接続エラー: ' + err.message);
+  }
+}
+
+// ==============================
+// GRAPH API
+// ==============================
+async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {}) {
+  state.token = await getToken();
+  const headers = {
+    'Authorization': `Bearer ${state.token}`,
+    'Content-Type': 'application/json',
+    ...extraHeaders
+  };
+  const opts = { method, headers };
+  if (body) opts.body = typeof body === 'string' ? body : JSON.stringify(body);
+
+  const res = await fetch('https://graph.microsoft.com/v1.0' + endpoint, opts);
+
+  if (res.status === 204) return null;
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Graph API エラー (${res.status}): ${errText}`);
+  }
+  return res.json();
+}
+
+async function callGraphBinary(endpoint, method, data) {
+  state.token = await getToken();
+  const res = await fetch('https://graph.microsoft.com/v1.0' + endpoint, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${state.token}`,
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    },
+    body: data
+  });
+  if (!res.ok) throw new Error(`Upload error: ${res.status}`);
+  return res.json();
+}
+
+// ==============================
+// EXCEL FILE MANAGEMENT
+// ==============================
+async function initExcelFile() {
+  try {
+    // Check if file already exists
+    const file = await callGraph(`/me/drive/root:/${CONFIG.excelFolderName}/${CONFIG.excelFileName}`);
+    state.excelFileId = file.id;
+    updateExcelStatus('接続済み');
+  } catch {
+    // Create it
+    await createExcelDatabase();
+    updateExcelStatus('新規作成完了');
+  }
+}
+
+async function createExcelDatabase() {
+  // Create folder
+  try {
+    await callGraph('/me/drive/root/children', 'POST', {
+      name: CONFIG.excelFolderName,
+      folder: {},
+      '@microsoft.graph.conflictBehavior': 'replace'
+    });
+  } catch {}
+
+  // Create Excel workbook with SheetJS
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([CONFIG.headers]);
+
+  // Style header row
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const addr = XLSX.utils.encode_cell({ r: 0, c });
+    if (!ws[addr]) continue;
+    ws[addr].s = { font: { bold: true }, fill: { fgColor: { rgb: '1A3A5C' } } };
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, CONFIG.sheetName);
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+
+  // Upload
+  const uploadResult = await callGraphBinary(
+    `/me/drive/root:/${CONFIG.excelFolderName}/${CONFIG.excelFileName}:/content`,
+    'PUT',
+    new Uint8Array(wbout)
+  );
+  state.excelFileId = uploadResult.id;
+
+  // Create table via Workbook API
+  await new Promise(r => setTimeout(r, 2000)); // wait for file to be indexed
+
+  try {
+    const ws_info = await callGraph(
+      `/me/drive/items/${state.excelFileId}/workbook/worksheets`
+    );
+    const sheetId = ws_info.value[0].id;
+
+    const colEnd = String.fromCharCode(64 + CONFIG.headers.length);
+    await callGraph(
+      `/me/drive/items/${state.excelFileId}/workbook/worksheets/${encodeURIComponent(sheetId)}/tables/add`,
+      'POST',
+      { address: `A1:${colEnd}1`, hasHeaders: true }
+    );
+
+    // Rename table
+    const tables = await callGraph(
+      `/me/drive/items/${state.excelFileId}/workbook/tables`
+    );
+    if (tables.value.length > 0) {
+      await callGraph(
+        `/me/drive/items/${state.excelFileId}/workbook/tables/${tables.value[0].id}`,
+        'PATCH',
+        { name: CONFIG.tableName }
+      );
+    }
+  } catch (e) {
+    console.warn('Table creation warning (may already exist):', e.message);
+  }
+}
+
+async function resetExcelFile() {
+  if (!confirm('データファイルを再作成しますか？\n※既存データは削除されます。')) return;
+  setLoading('ファイルを再作成中...');
+  try {
+    // Delete existing
+    try {
+      await callGraph(`/me/drive/items/${state.excelFileId}`, 'DELETE');
+    } catch {}
+    await createExcelDatabase();
+    showToast('ファイルを再作成しました', 'success');
+    showScreen('settings');
+  } catch (e) {
+    showToast('エラー: ' + e.message, 'error');
+  }
+}
+
+async function appendRowToExcel(rowData) {
+  // Use table rows add API
+  try {
+    await callGraph(
+      `/me/drive/items/${state.excelFileId}/workbook/tables('${CONFIG.tableName}')/rows/add`,
+      'POST',
+      { values: [rowData] }
+    );
+    return true;
+  } catch (e) {
+    // Fallback: download, append, upload
+    console.warn('Table API failed, using fallback:', e.message);
+    return await appendRowFallback(rowData);
+  }
+}
+
+async function appendRowFallback(rowData) {
+  // Download current file
+  const downloadRes = await fetch(
+    `https://graph.microsoft.com/v1.0/me/drive/items/${state.excelFileId}/content`,
+    { headers: { Authorization: `Bearer ${state.token}` } }
+  );
+  if (!downloadRes.ok) throw new Error('ダウンロードに失敗しました');
+
+  const arrayBuffer = await downloadRes.arrayBuffer();
+  const wb = XLSX.read(arrayBuffer, { type: 'array' });
+  const ws = wb.Sheets[CONFIG.sheetName] || wb.Sheets[wb.SheetNames[0]];
+
+  XLSX.utils.sheet_add_aoa(ws, [rowData], { origin: -1 });
+
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  await callGraphBinary(
+    `/me/drive/items/${state.excelFileId}/content`,
+    'PUT',
+    new Uint8Array(wbout)
+  );
+  return true;
+}
+
+// ==============================
+// SETTINGS & LOCAL STORAGE
+// ==============================
+function loadSettings() {
+  const saved = JSON.parse(localStorage.getItem('nippou_settings') || '{}');
+  document.getElementById('setting-home-name').value = saved.homeName || '下豊岡';
+
+  const residents = saved.residents || ['', '', '', '', ''];
+  renderResidentNameList(residents);
+
+  // Check if residents configured
+  const hasResidents = residents.filter(r => r.trim()).length > 0;
+  document.getElementById('main-config-banner').classList.toggle('hidden', hasResidents);
+
+  return saved;
+}
+
+function saveSettings() {
+  const homeName = document.getElementById('setting-home-name').value.trim();
+  const residents = Array.from(document.querySelectorAll('.resident-name-input'))
+    .map(inp => inp.value.trim())
+    .filter(r => r);
+
+  localStorage.setItem('nippou_settings', JSON.stringify({ homeName, residents }));
+
+  const hasResidents = residents.length > 0;
+  document.getElementById('main-config-banner').classList.toggle('hidden', hasResidents);
+
+  showScreen('main');
+  initForm();
+  showToast('設定を保存しました', 'success');
+}
+
+function getSettings() {
+  return JSON.parse(localStorage.getItem('nippou_settings') || '{"homeName":"下豊岡","residents":[]}');
+}
+
+function renderResidentNameList(residents) {
+  const container = document.getElementById('resident-name-list');
+  container.innerHTML = '';
+  residents.forEach((name, i) => {
+    const div = document.createElement('div');
+    div.className = 'resident-list-item';
+    div.innerHTML = `
+      <input type="text" class="resident-list-input resident-name-input"
+             value="${escHtml(name)}" placeholder="利用者 ${i + 1}"
+             style="flex:1">
+      <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function addResidentField() {
+  const container = document.getElementById('resident-name-list');
+  const div = document.createElement('div');
+  div.className = 'resident-list-item';
+  const idx = container.children.length + 1;
+  div.innerHTML = `
+    <input type="text" class="resident-list-input resident-name-input"
+           value="" placeholder="利用者 ${idx}" style="flex:1">
+    <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
+  `;
+  container.appendChild(div);
+}
+
+function removeResidentField(btn) {
+  btn.closest('.resident-list-item').remove();
+}
+
+function updateExcelStatus(msg) {
+  const el = document.getElementById('excel-status');
+  if (el) el.textContent = `OneDriveパス: ${CONFIG.excelFolderName}/${CONFIG.excelFileName} (${msg})`;
+}
+
+// ==============================
+// FORM INIT & RENDERING
+// ==============================
+function initForm() {
+  const today = new Date();
+  document.getElementById('input-date').value = today.toISOString().slice(0, 10);
+  state.timeSlot = null;
+  state.staffMeal = null;
+  state.residentData = {};
+
+  document.querySelectorAll('.time-slot-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.toggle-btn').forEach(b => b.className = 'toggle-btn');
+  document.getElementById('input-staff-name').value = '';
+  document.getElementById('input-kinmu').value = '';
+  document.getElementById('group-kinmu').classList.add('hidden');
+
+  renderResidents();
+  updateSubmitState();
+}
+
+function selectTimeSlot(slot) {
+  state.timeSlot = slot;
+  state.residentData = {};
+
+  document.querySelectorAll('.time-slot-btn').forEach(b => {
+    const name = b.querySelector('.slot-name').textContent;
+    b.classList.toggle('active', name === slot);
+  });
+
+  // Show/hide 勤務体系
+  const needsKinmu = slot === '日中' || slot === '夜間';
+  document.getElementById('group-kinmu').classList.toggle('hidden', !needsKinmu);
+
+  renderResidents();
+  updateSubmitState();
+}
+
+function renderResidents() {
+  const container = document.getElementById('residents-container');
+  container.innerHTML = '';
+
+  const { residents } = getSettings();
+  if (!residents || residents.length === 0) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">設定から利用者名を登録してください</div>';
+    return;
+  }
+
+  if (!state.timeSlot) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">時間帯を選択してください</div>';
+    return;
+  }
+
+  residents.forEach(name => {
+    container.appendChild(createResidentBlock(name));
+  });
+}
+
+function createResidentBlock(name) {
+  const div = document.createElement('div');
+  div.className = 'resident-block';
+  div.id = `block-${safeName(name)}`;
+
+  div.innerHTML = `
+    <div class="resident-header" onclick="toggleResident('${safeName(name)}')">
+      <span class="resident-name">${escHtml(name)}</span>
+      <div class="resident-status">
+        <span class="resident-badge badge-absent" id="badge-${safeName(name)}">未入力</span>
+        <svg class="resident-chevron" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 10l5 5 5-5z"/>
+        </svg>
+      </div>
+    </div>
+    <div class="resident-body">
+      ${renderResidentForm(name)}
+    </div>
+  `;
+
+  return div;
+}
+
+function renderResidentForm(name) {
+  const slot = state.timeSlot;
+  const key = safeName(name);
+
+  const riyouField = `
+    <div class="form-group">
+      <label class="form-label">利用の有無<span class="required">*</span></label>
+      <div class="toggle-group">
+        <button class="toggle-btn" id="toggle-riyou-${key}-有"
+                onclick="setResidentField('${key}', 'riyou', '有'); updateResidentBadge('${key}')">
+          有（利用あり）
+        </button>
+        <button class="toggle-btn" id="toggle-riyou-${key}-無"
+                onclick="setResidentField('${key}', 'riyou', '無'); updateResidentBadge('${key}')">
+          無（外泊等）
+        </button>
+      </div>
+    </div>
+  `;
+
+  if (slot === '早朝') {
+    return `
+      ${riyouField}
+      <div class="section-divider">体調・異常確認</div>
+      <div class="form-group">
+        <label class="form-label">異常の有無</label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentField('${key}', 'ijo', '無')">無</button>
+          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentField('${key}', 'ijo', '有')">有</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">体調確認時間</label>
+        <input type="time" class="form-input" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">体調確認方法</label>
+        <input type="text" class="form-input" placeholder="例：起床確認、声かけ"
+               oninput="setResidentField('${key}', 'taichoHoho', this.value)">
+      </div>
+      <div class="section-divider">支援・食事</div>
+      <div class="form-group">
+        <label class="form-label">支援内容</label>
+        <textarea class="form-textarea" placeholder="支援した内容を記入"
+                  oninput="setResidentField('${key}', 'shien', this.value)"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">朝食内容</label>
+        <input type="text" class="form-input" placeholder="例：ご飯、味噌汁、卵焼き"
+               oninput="setResidentField('${key}', 'shokuji', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">昼食準備</label>
+        <input type="text" class="form-input" placeholder="昼食の準備内容"
+               oninput="setResidentField('${key}', 'chushokuJunbi', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">備考（相談内容・支援内容等）</label>
+        <textarea class="form-textarea" rows="3"
+                  placeholder="身体拘束・苦情・事故等も記載"
+                  oninput="setResidentField('${key}', 'biko', this.value)"></textarea>
+      </div>
+    `;
+  }
+
+  if (slot === '日中') {
+    return `
+      ${riyouField}
+      <div class="section-divider">活動内容</div>
+      <div class="form-group">
+        <label class="form-label">活動内容</label>
+        <textarea class="form-textarea" placeholder="日中の活動内容を記入"
+                  oninput="setResidentField('${key}', 'katsudo', this.value)"></textarea>
+      </div>
+      <div class="section-divider">体調確認</div>
+      <div class="form-group">
+        <label class="form-label">体調確認時間</label>
+        <input type="time" class="form-input" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
+      </div>
+      <div class="section-divider">支援・食事</div>
+      <div class="form-group">
+        <label class="form-label">支援内容</label>
+        <textarea class="form-textarea" placeholder="支援した内容を記入"
+                  oninput="setResidentField('${key}', 'shien', this.value)"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">夕食内容</label>
+        <input type="text" class="form-input" placeholder="例：ご飯、肉じゃが、味噌汁"
+               oninput="setResidentField('${key}', 'shokuji', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">連携及び調整</label>
+        <textarea class="form-textarea" placeholder="関係機関等との連携内容"
+                  oninput="setResidentField('${key}', 'renkei', this.value)"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">備考（相談内容・支援内容等）</label>
+        <textarea class="form-textarea" rows="3"
+                  placeholder="身体拘束・苦情・事故等も記載"
+                  oninput="setResidentField('${key}', 'biko', this.value)"></textarea>
+      </div>
+    `;
+  }
+
+  if (slot === '夜間') {
+    return `
+      ${riyouField}
+      <div class="form-group">
+        <label class="form-label">外泊</label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="toggle-gaihaku-${key}-無" onclick="setResidentField('${key}', 'gaihaku', '無')">無</button>
+          <button class="toggle-btn" id="toggle-gaihaku-${key}-有" onclick="setResidentField('${key}', 'gaihaku', '有')">有</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">夜間支援</label>
+        <select class="form-select" onchange="setResidentField('${key}', 'yakanShien', this.value)">
+          <option value="">選択してください</option>
+          <option value="夜間支援対応型">夜間支援対応型</option>
+          <option value="外部サービス利用型">外部サービス利用型</option>
+          <option value="日中サービス支援型">日中サービス支援型</option>
+          <option value="その他">その他</option>
+        </select>
+      </div>
+      <div class="section-divider">異常確認・状況</div>
+      <div class="form-group">
+        <label class="form-label">異常の有無</label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentField('${key}', 'ijo', '無')">無</button>
+          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentField('${key}', 'ijo', '有')">有</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">巡回時間</label>
+        <input type="text" class="form-input" placeholder="例：23:00, 2:00, 5:00"
+               oninput="setResidentField('${key}', 'junkai', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">備考（相談内容・支援内容等）</label>
+        <textarea class="form-textarea" rows="3"
+                  placeholder="身体拘束・苦情・事故等も記載"
+                  oninput="setResidentField('${key}', 'biko', this.value)"></textarea>
+      </div>
+    `;
+  }
+
+  return '';
+}
+
+// ==============================
+// FORM STATE MANAGEMENT
+// ==============================
+function setResidentField(key, field, value) {
+  if (!state.residentData[key]) state.residentData[key] = {};
+  state.residentData[key][field] = value;
+  updateSubmitState();
+}
+
+function toggleSelect(group, value) {
+  // For staff-meal
+  if (group === 'staff-meal') {
+    state.staffMeal = value;
+    const yesBtn = document.getElementById('toggle-staff-meal-yes');
+    const noBtn = document.getElementById('toggle-staff-meal-no');
+    yesBtn.className = 'toggle-btn' + (value === '有' ? ' active-yes' : '');
+    noBtn.className = 'toggle-btn' + (value === '無' ? ' active-no' : '');
+  }
+}
+
+function setResidentFieldAndToggle(key, field, value, btnId) {
+  setResidentField(key, field, value);
+  // Update toggle buttons
+  const togglePrefixes = [`toggle-${field}-${key}-`];
+  togglePrefixes.forEach(prefix => {
+    ['有', '無'].forEach(v => {
+      const btn = document.getElementById(prefix + v);
+      if (!btn) return;
+      btn.className = 'toggle-btn';
+      if (v === value) {
+        btn.className = 'toggle-btn ' + (value === '有' ? 'active-yes' : 'active-no');
+      }
+    });
+  });
+}
+
+// Override onclick handlers after DOM insertion
+function setupToggleHandlers() {
+  const { residents } = getSettings();
+  residents.forEach(name => {
+    const key = safeName(name);
+    ['riyou', 'ijo', 'gaihaku'].forEach(field => {
+      ['有', '無'].forEach(value => {
+        const btn = document.getElementById(`toggle-${field}-${key}-${value}`);
+        if (btn) {
+          btn.onclick = () => {
+            setResidentField(key, field, value);
+            // Update button styles for this field
+            ['有', '無'].forEach(v => {
+              const b = document.getElementById(`toggle-${field}-${key}-${v}`);
+              if (b) {
+                b.className = 'toggle-btn';
+                if (v === value) b.className += value === '有' ? ' active-yes' : ' active-no';
+              }
+            });
+            updateResidentBadge(key);
+          };
+        }
+      });
+    });
+  });
+}
+
+function updateResidentBadge(key) {
+  const badge = document.getElementById(`badge-${key}`);
+  if (!badge) return;
+  const data = state.residentData[key] || {};
+  if (data.riyou === '無') {
+    badge.textContent = '外泊等';
+    badge.className = 'resident-badge badge-absent';
+  } else if (data.riyou === '有') {
+    if (data.ijo === '有') {
+      badge.textContent = '異常あり';
+      badge.className = 'resident-badge badge-abnormal';
+    } else {
+      badge.textContent = '入力済';
+      badge.className = 'resident-badge badge-present';
+    }
+  } else {
+    badge.textContent = '未入力';
+    badge.className = 'resident-badge badge-absent';
+  }
+}
+
+function toggleResident(key) {
+  const block = document.getElementById(`block-${key}`);
+  if (block) block.classList.toggle('open');
+}
+
+function updateSubmitState() {
+  const btn = document.getElementById('btn-submit');
+  const date = document.getElementById('input-date').value;
+  const staff = document.getElementById('input-staff-name').value.trim();
+  const hasSlot = !!state.timeSlot;
+
+  btn.disabled = !(date && staff && hasSlot);
+}
+
+// ==============================
+// FORM SUBMISSION
+// ==============================
+async function submitForm() {
+  const date = document.getElementById('input-date').value;
+  const staffName = document.getElementById('input-staff-name').value.trim();
+  const kinmu = document.getElementById('input-kinmu').value;
+
+  if (!date || !staffName || !state.timeSlot) {
+    showToast('日付・時間帯・職員名を入力してください', 'error');
+    return;
+  }
+
+  const { homeName, residents } = getSettings();
+  if (!residents || residents.length === 0) {
+    showToast('先に設定から利用者名を登録してください', 'error');
+    return;
+  }
+
+  setLoading('保存中...');
+
+  try {
+    const now = new Date().toLocaleString('ja-JP');
+    let savedCount = 0;
+
+    for (const name of residents) {
+      const key = safeName(name);
+      const d = state.residentData[key] || {};
+
+      // Build row matching CONFIG.headers
+      // ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系',
+      //  '職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容',
+      //  '食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考']
+      const row = [
+        now,                          // 送信日時
+        date,                         // 報告日
+        homeName,                     // ホーム名
+        name,                         // 利用者名
+        state.timeSlot,               // 時間帯
+        staffName,                    // 担当職員名
+        kinmu || '',                  // 勤務体系
+        state.staffMeal || '',        // 職員食事
+        d.riyou || '',                // 利用の有無
+        d.ijo || '',                  // 異常の有無
+        d.taichoJikan || '',          // 体調確認時間
+        d.taichoHoho || '',           // 体調確認方法
+        d.shien || '',                // 支援内容
+        d.shokuji || '',              // 食事内容
+        d.chushokuJunbi || '',        // 昼食準備（早朝のみ）
+        d.katsudo || '',              // 活動内容（日中のみ）
+        d.renkei || '',               // 連携及び調整（日中のみ）
+        d.gaihaku || '',              // 外泊（夜間のみ）
+        d.yakanShien || '',           // 夜間支援（夜間のみ）
+        d.junkai || '',               // 巡回時間（夜間のみ）
+        d.biko || '',                 // 備考
+      ];
+
+      await appendRowToExcel(row);
+      savedCount++;
+    }
+
+    document.getElementById('success-detail').textContent =
+      `${date}（${state.timeSlot}） / ${residents.length}名分の記録をOneDriveに保存しました`;
+
+    showScreen('success');
+  } catch (err) {
+    console.error(err);
+    showScreen('main');
+    showToast('保存エラー: ' + err.message, 'error');
+  }
+}
+
+function goToNextEntry() {
+  // Keep staff name, date, and time slot — just clear resident data
+  const staffName = document.getElementById('input-staff-name').value;
+  const date = document.getElementById('input-date').value;
+  const slot = state.timeSlot;
+
+  state.residentData = {};
+  showScreen('main');
+
+  document.getElementById('input-date').value = date;
+  document.getElementById('input-staff-name').value = staffName;
+  selectTimeSlot(slot);
+}
+
+function clearForm() {
+  if (!confirm('入力内容をクリアしますか？')) return;
+  initForm();
+}
+
+// ==============================
+// SCREEN MANAGEMENT
+// ==============================
+function showScreen(name) {
+  ['loading', 'login', 'main', 'success', 'settings'].forEach(s => {
+    const el = document.getElementById(`screen-${s}`);
+    if (el) el.classList.toggle('hidden', s !== name);
+  });
+
+  if (name === 'settings') {
+    loadSettings();
+    updateExcelStatus(state.excelFileId ? '接続済み' : '未接続');
+  }
+}
+
+function setLoading(msg = '処理中...') {
+  document.getElementById('loading-text').textContent = msg;
+  showScreen('loading');
+}
+
+function showSettings() {
+  showScreen('settings');
+}
+
+// ==============================
+// UI HELPERS
+// ==============================
+function showToast(msg, type = '') {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.className = 'toast show' + (type ? ` ${type}` : '');
+  setTimeout(() => { toast.className = 'toast'; }, 3000);
+}
+
+function showError(id, msg) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.textContent = msg;
+    el.classList.remove('hidden');
+  }
+}
+
+function safeName(name) {
+  return name.replace(/[^a-zA-Z0-9ぁ-んァ-ン一-龥]/g, '_');
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ==============================
+// INITIALIZATION
+// ==============================
+document.addEventListener('DOMContentLoaded', () => {
+  showScreen('loading');
+
+  // Check if clientId is configured
+  if (!CONFIG.clientId || CONFIG.clientId === 'YOUR_CLIENT_ID_HERE') {
+    showScreen('login');
+    document.getElementById('login-error').textContent =
+      '管理者設定が必要です。index.html内のCONFIG.clientIdを設定してください（README.md参照）';
+    document.getElementById('login-error').classList.remove('hidden');
+    return;
+  }
+
+  initMsal();
+});
+
+// Re-setup toggle handlers whenever residents are rendered
+const _origRenderResidents = renderResidents;
+window.renderResidents = function() {
+  _origRenderResidents();
+  // Setup toggle handlers after DOM update
+  setTimeout(setupToggleHandlers, 0);
+};
+</script>
+</body>
+</html>

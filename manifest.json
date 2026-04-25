@@ -1,0 +1,19 @@
+{
+  "name": "電子日報 - One's Place",
+  "short_name": "電子日報",
+  "description": "グループホーム電子日報入力アプリ",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1a3a5c",
+  "theme_color": "#1a3a5c",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='24' fill='%231a3a5c'/><path fill='white' d='M96 30L30 80v82h52v-50h28v50h52V80z'/></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

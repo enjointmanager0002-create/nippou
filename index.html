@@ -700,12 +700,6 @@
         <label class="form-label">勤務体系</label>
         <select id="input-kinmu" class="form-select">
           <option value="">選択してください</option>
-          <option value="日勤">日勤</option>
-          <option value="早番">早番</option>
-          <option value="遅番">遅番</option>
-          <option value="夜勤">夜勤</option>
-          <option value="当直">当直</option>
-          <option value="その他">その他</option>
         </select>
       </div>
 
@@ -1407,9 +1401,10 @@ function selectTimeSlot(slot) {
     b.classList.toggle('active', name === slot);
   });
 
-  // Show/hide 勤務体系
+  // Show/hide 勤務体系 and update options per slot
   const needsKinmu = slot === '日中' || slot === '夜間';
   document.getElementById('group-kinmu').classList.toggle('hidden', !needsKinmu);
+  if (needsKinmu) updateKinmuOptions(slot);
 
   renderResidents();
   updateSubmitState();
@@ -1464,8 +1459,12 @@ function createResidentBlock(name) {
   return div;
 }
 
-const SHIEN_OPTIONS = ['服薬支援','食事提供','片付け','掃除','洗濯','排泄援助','入浴援助','整容','相談支援','買い物','金銭管理'];
-const FOOD_OPTIONS  = ['ご飯一式提供','おかずのみ提供','提供無し'];
+const SHIEN_OPTIONS    = ['服薬支援','食事提供','片付け','掃除','洗濯','排泄援助','入浴援助','整容','相談支援','買い物','金銭管理'];
+const FOOD_OPTIONS     = ['ご飯一式提供','おかずのみ提供','提供無し'];
+const YUSHOKU_OPTIONS  = ['ご飯・汁物提供','おかずのみ提供','提供なし'];
+const KATSUDO_OPTIONS  = ['仕事・アルバイト','作業所・地活','デイケア','病院','訪問看護','休日','GHで過ごす'];
+const KINMU_NICCHU     = ['夕朝勤(14:00-翌9:00)','夕朝勤(15:00-翌9:00)','夕朝勤(16:00-翌9:00)','夕朝勤(17:00-翌9:00)','夕朝勤(18:00-翌9:00)','夕朝勤(19:00-翌9:00)','夕勤(14:00-21:00)','夕勤(15:00-21:00)','夕勤(16:00-21:00)','夕勤(17:00-21:00)','その他'];
+const KINMU_YAKAN      = ['S夜勤(21:00-翌9:00)','S夜勤(22:00-翌9:00)','その他'];
 
 function shienChips(key) {
   return `<div class="chip-group">${SHIEN_OPTIONS.map(o =>
@@ -1477,6 +1476,20 @@ function foodToggle(key, field) {
   return `<div class="toggle-group">${FOOD_OPTIONS.map(o =>
     `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this)">${o}</button>`
   ).join('')}</div>`;
+}
+
+function yushokuToggle(key, field) {
+  return `<div class="toggle-group">${YUSHOKU_OPTIONS.map(o =>
+    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this)">${o}</button>`
+  ).join('')}</div>`;
+}
+
+function updateKinmuOptions(slot) {
+  const sel = document.getElementById('input-kinmu');
+  if (!sel) return;
+  const opts = slot === '夜間' ? KINMU_YAKAN : KINMU_NICCHU;
+  sel.innerHTML = '<option value="">選択してください</option>' +
+    opts.map(o => `<option value="${o}">${o}</option>`).join('');
 }
 
 function toggleShienChip(key, value, el) {
@@ -1545,12 +1558,22 @@ function renderResidentForm(name) {
         ${shienChips(key)}
       </div>
       <div class="form-group">
-        <label class="form-label">朝食内容</label>
+        <label class="form-label">朝食準備<span class="required">*</span></label>
         ${foodToggle(key, 'shokuji')}
       </div>
       <div class="form-group">
-        <label class="form-label">昼食準備</label>
+        <label class="form-label">朝食内容</label>
+        <textarea class="form-textarea" rows="2" placeholder="用意した朝食の内容を記入"
+                  oninput="setResidentField('${key}', 'shokujiNaiyo', this.value)"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">昼食準備<span class="required">*</span></label>
         ${foodToggle(key, 'chushokuJunbi')}
+      </div>
+      <div class="form-group">
+        <label class="form-label">昼食内容</label>
+        <textarea class="form-textarea" rows="2" placeholder="用意した昼食の内容を記入"
+                  oninput="setResidentField('${key}', 'chushokuNaiyo', this.value)"></textarea>
       </div>
       <div class="form-group">
         <label class="form-label">備考（相談内容・支援内容等）</label>
@@ -1567,8 +1590,10 @@ function renderResidentForm(name) {
       <div class="section-divider">活動内容</div>
       <div class="form-group">
         <label class="form-label">活動内容</label>
-        <textarea class="form-textarea" placeholder="日中の活動内容を記入"
-                  oninput="setResidentField('${key}', 'katsudo', this.value)"></textarea>
+        <select class="form-select" onchange="setResidentField('${key}', 'katsudo', this.value)">
+          <option value="">選択してください</option>
+          ${KATSUDO_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
+        </select>
       </div>
       <div class="section-divider">体調確認</div>
       <div class="form-group">
@@ -1581,8 +1606,13 @@ function renderResidentForm(name) {
         ${shienChips(key)}
       </div>
       <div class="form-group">
+        <label class="form-label">夕食準備</label>
+        ${yushokuToggle(key, 'shokuji')}
+      </div>
+      <div class="form-group">
         <label class="form-label">夕食内容</label>
-        ${foodToggle(key, 'shokuji')}
+        <textarea class="form-textarea" rows="2" placeholder="用意した夕食の内容を記入"
+                  oninput="setResidentField('${key}', 'shokujiNaiyo', this.value)"></textarea>
       </div>
       <div class="form-group">
         <label class="form-label">連携及び調整</label>
@@ -1612,10 +1642,8 @@ function renderResidentForm(name) {
         <label class="form-label">夜間支援</label>
         <select class="form-select" onchange="setResidentField('${key}', 'yakanShien', this.value)">
           <option value="">選択してください</option>
-          <option value="夜間支援対応型">夜間支援対応型</option>
-          <option value="外部サービス利用型">外部サービス利用型</option>
-          <option value="日中サービス支援型">日中サービス支援型</option>
-          <option value="その他">その他</option>
+          <option value="夜勤">夜勤</option>
+          <option value="当直">当直</option>
         </select>
       </div>
       <div class="section-divider">異常確認・状況</div>
@@ -1713,7 +1741,18 @@ function updateSubmitState() {
   const hasSlot = !!state.timeSlot;
   const hasHome = !!state.selectedHome;
 
-  btn.disabled = !(date && staff && hasSlot && hasHome);
+  let foodOk = true;
+  if (state.timeSlot === '早朝' && state.selectedHome) {
+    const { homes } = getSettings();
+    const homeObj = homes.find(h => h.name === state.selectedHome);
+    const residents = homeObj ? homeObj.residents.filter(Boolean) : [];
+    for (const name of residents) {
+      const d = state.residentData[safeName(name)] || {};
+      if (!d.shokuji || !d.chushokuJunbi) { foodOk = false; break; }
+    }
+  }
+
+  btn.disabled = !(date && staff && hasSlot && hasHome && foodOk);
 }
 
 // ==============================
@@ -1770,8 +1809,8 @@ async function submitForm() {
         d.taichoJikan || '',          // 体調確認時間
         d.taichoHoho || '',           // 体調確認方法
         d.shien || '',                // 支援内容
-        d.shokuji || '',              // 食事内容
-        d.chushokuJunbi || '',        // 昼食準備（早朝のみ）
+        [d.shokuji, d.shokujiNaiyo].filter(Boolean).join('\n'),   // 食事内容
+        [d.chushokuJunbi, d.chushokuNaiyo].filter(Boolean).join('\n'), // 昼食準備（早朝のみ）
         d.katsudo || '',              // 活動内容（日中のみ）
         d.renkei || '',               // 連携及び調整（日中のみ）
         d.gaihaku || '',              // 外泊（夜間のみ）

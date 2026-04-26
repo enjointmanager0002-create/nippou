@@ -895,7 +895,8 @@ class MinimalAuth {
   }
 
   _store(data) {
-    const pay = JSON.parse(atob((data.id_token || '..').split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    const seg = (data.id_token || '..').split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    const pay = JSON.parse(decodeURIComponent(atob(seg).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
     localStorage.setItem('_auth', JSON.stringify({
       accessToken: data.access_token,
       refreshToken: data.refresh_token,

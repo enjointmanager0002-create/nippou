@@ -693,19 +693,7 @@
         <select id="input-staff-name" class="form-select" onchange="updateSubmitState()">
           <option value="">職員を選択してください</option>
         </select>
-        <div id="staff-add-area" style="margin-top:8px">
-          <button type="button" class="btn-add-resident" onclick="showStaffAddInput()" id="btn-show-staff-add">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-            名前を追加
-          </button>
-          <div id="staff-inline-add" style="display:none;margin-top:8px;display:none">
-            <div style="display:flex;gap:8px;align-items:center">
-              <input type="text" id="input-new-staff" class="form-input" placeholder="氏名を入力" style="flex:1;margin:0">
-              <button type="button" class="btn btn-primary" style="padding:10px 16px;font-size:14px" onclick="confirmAddStaff()">追加</button>
-              <button type="button" class="btn btn-secondary" style="padding:10px 12px;font-size:14px" onclick="hideStaffAddInput()">✕</button>
-            </div>
-          </div>
-        </div>
+        <p style="font-size:12px;color:#888;margin:4px 0 0">職員名は設定画面から追加・管理できます</p>
       </div>
 
       <div id="group-kinmu" class="form-group hidden">
@@ -773,20 +761,21 @@
   <div class="settings-content">
 
     <div class="card">
-      <div class="card-title">職員名登録</div>
-      <div id="staff-name-list"></div>
-      <button class="btn-add-resident" onclick="addStaffNameField()" style="margin-top:8px">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        職員を追加
-      </button>
-    </div>
-
-    <div class="card">
       <div class="card-title">住居・利用者設定</div>
       <div id="home-list"></div>
       <button class="btn-add-resident" onclick="addHomeBlock()" style="margin-top:8px">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
         住居を追加
+      </button>
+    </div>
+
+    <div class="card">
+      <div class="card-title">職員名登録</div>
+      <p style="font-size:12px;color:#888;margin:0 0 8px">担当住居にチェックを入れてください</p>
+      <div id="staff-name-list"></div>
+      <button class="btn-add-resident" id="btn-add-staff" onclick="addStaffNameField()" style="margin-top:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        <span class="staff-count-label">職員を追加（0/11）</span>
       </button>
     </div>
 
@@ -797,7 +786,7 @@
     </div>
 
     <div class="btn-row" style="margin-top:8px">
-      <button class="btn btn-primary" onclick="saveSettings()">保存して戻る</button>
+      <button type="button" class="btn btn-primary" onclick="saveSettings()">保存して戻る</button>
     </div>
   </div>
 </div>
@@ -1202,15 +1191,27 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  const homes = _collectHomesFromDOM();
-  const staffNames = Array.from(document.querySelectorAll('.staff-name-input'))
-    .map(i => i.value.trim()).filter(Boolean);
-  localStorage.setItem('nippou_settings', JSON.stringify({ homes, staffNames }));
-  const hasAny = homes.some(h => h.residents.length > 0);
-  document.getElementById('main-config-banner').classList.toggle('hidden', hasAny);
-  showScreen('main');
-  initForm();
-  showToast('設定を保存しました', 'success');
+  try {
+    const homes = _collectHomesFromDOM();
+    const staffNames = _collectStaffFromDOM();
+    localStorage.setItem('nippou_settings', JSON.stringify({ homes, staffNames }));
+    const hasAny = homes.some(h => h.residents.length > 0);
+    const banner = document.getElementById('main-config-banner');
+    if (banner) banner.classList.toggle('hidden', hasAny);
+    showScreen('main');
+    initForm();
+    showToast('設定を保存しました', 'success');
+  } catch (e) {
+    showToast('保存エラー: ' + e.message, 'error');
+    console.error('saveSettings error:', e);
+  }
+}
+
+function _collectStaffFromDOM() {
+  return Array.from(document.querySelectorAll('#staff-name-list .resident-list-item')).map(item => ({
+    name: item.querySelector('.staff-name-input').value.trim(),
+    homes: Array.from(item.querySelectorAll('.staff-home-check:checked')).map(cb => cb.value)
+  })).filter(s => s.name);
 }
 
 function getSettings() {
@@ -1219,10 +1220,14 @@ function getSettings() {
 
 function _loadRawSettings() {
   const raw = JSON.parse(localStorage.getItem('nippou_settings') || '{}');
+  let homes = raw.homes || [];
   if (!raw.homes && raw.homeName) {
-    return { homes: [{ name: raw.homeName, residents: raw.residents || [] }], staffNames: raw.staffNames || [] };
+    homes = [{ name: raw.homeName, residents: raw.residents || [] }];
   }
-  return { homes: raw.homes || [], staffNames: raw.staffNames || [] };
+  // migrate staffNames: string[] → {name, homes}[]
+  const rawStaff = raw.staffNames || [];
+  const staffNames = rawStaff.map(s => typeof s === 'string' ? { name: s, homes: [] } : s);
+  return { homes, staffNames };
 }
 
 function _collectHomesFromDOM() {
@@ -1233,70 +1238,81 @@ function _collectHomesFromDOM() {
   })).filter(h => h.name);
 }
 
-function renderStaffNameList(staffNames) {
+function _getHomeNamesFromDOM() {
+  const fromDOM = Array.from(document.querySelectorAll('.home-name-input'))
+    .map(i => i.value.trim()).filter(Boolean);
+  if (fromDOM.length > 0) return fromDOM;
+  return _loadRawSettings().homes.map(h => h.name).filter(Boolean);
+}
+
+function _createStaffItem(staffObj, idx) {
+  const name = staffObj.name || '';
+  const assignedHomes = staffObj.homes || [];
+  const homeNames = _getHomeNamesFromDOM();
+  const div = document.createElement('div');
+  div.className = 'resident-list-item';
+  div.style.cssText = 'flex-wrap:wrap;align-items:flex-start;padding:10px 8px;gap:6px';
+  const checksHtml = homeNames.length > 0
+    ? homeNames.map(h => `
+        <label style="display:flex;align-items:center;gap:4px;font-size:13px;cursor:pointer;white-space:nowrap">
+          <input type="checkbox" class="staff-home-check" value="${escHtml(h)}"${assignedHomes.includes(h) ? ' checked' : ''}>
+          ${escHtml(h)}
+        </label>`).join('')
+    : '<span style="font-size:12px;color:#aaa">先に住居を登録してください</span>';
+  div.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;width:100%">
+      <input type="text" class="resident-list-input staff-name-input"
+             value="${escHtml(name)}" placeholder="職員 ${idx + 1}" style="flex:1;margin:0">
+      <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;padding-left:2px">${checksHtml}</div>
+  `;
+  return div;
+}
+
+function renderStaffNameList(staffList) {
   const container = document.getElementById('staff-name-list');
   container.innerHTML = '';
-  staffNames.forEach((name, i) => {
-    const div = document.createElement('div');
-    div.className = 'resident-list-item';
-    div.innerHTML = `
-      <input type="text" class="resident-list-input staff-name-input"
-             value="${escHtml(name)}" placeholder="職員 ${i + 1}" style="flex:1">
-      <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
-    `;
-    container.appendChild(div);
-  });
+  staffList.forEach((s, i) => container.appendChild(_createStaffItem(s, i)));
+  _updateStaffAddBtn();
 }
+
+const MAX_STAFF = 11;
 
 function addStaffNameField() {
   const container = document.getElementById('staff-name-list');
-  const div = document.createElement('div');
-  div.className = 'resident-list-item';
-  const idx = container.children.length + 1;
-  div.innerHTML = `
-    <input type="text" class="resident-list-input staff-name-input"
-           value="" placeholder="職員 ${idx}" style="flex:1">
-    <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
-  `;
-  container.appendChild(div);
-  div.querySelector('input').focus();
+  if (container.children.length >= MAX_STAFF) {
+    showToast(`職員名は最大${MAX_STAFF}名まで登録できます`, 'error');
+    return;
+  }
+  const idx = container.children.length;
+  const item = _createStaffItem({ name: '', homes: [] }, idx);
+  container.appendChild(item);
+  item.querySelector('.staff-name-input').focus();
+  _updateStaffAddBtn();
+}
+
+function _updateStaffAddBtn() {
+  const container = document.getElementById('staff-name-list');
+  const btn = document.getElementById('btn-add-staff');
+  if (!btn) return;
+  const count = container.children.length;
+  btn.disabled = count >= MAX_STAFF;
+  btn.querySelector('.staff-count-label').textContent = `職員を追加（${count}/${MAX_STAFF}）`;
 }
 
 function populateStaffDropdown(selectedName) {
   const { staffNames } = _loadRawSettings();
   const sel = document.getElementById('input-staff-name');
-  const current = selectedName || sel.value;
+  const current = selectedName !== undefined ? selectedName : sel.value;
+  const filtered = state.selectedHome
+    ? staffNames.filter(s => (s.homes || []).includes(state.selectedHome))
+    : staffNames;
   sel.innerHTML = '<option value="">職員を選択してください</option>' +
-    staffNames.map(n => `<option value="${escHtml(n)}"${n === current ? ' selected' : ''}>${escHtml(n)}</option>`).join('');
-  if (current && staffNames.includes(current)) sel.value = current;
+    filtered.map(s => `<option value="${escHtml(s.name)}"${s.name === current ? ' selected' : ''}>${escHtml(s.name)}</option>`).join('');
+  if (!filtered.some(s => s.name === current)) sel.value = '';
 }
 
-function showStaffAddInput() {
-  document.getElementById('btn-show-staff-add').style.display = 'none';
-  const area = document.getElementById('staff-inline-add');
-  area.style.display = 'block';
-  document.getElementById('input-new-staff').focus();
-}
-
-function hideStaffAddInput() {
-  document.getElementById('staff-inline-add').style.display = 'none';
-  document.getElementById('btn-show-staff-add').style.display = '';
-  document.getElementById('input-new-staff').value = '';
-}
-
-function confirmAddStaff() {
-  const input = document.getElementById('input-new-staff');
-  const name = input.value.trim();
-  if (!name) { showToast('氏名を入力してください', 'error'); return; }
-  const { homes, staffNames } = _loadRawSettings();
-  if (staffNames.includes(name)) { showToast('すでに登録されています', 'error'); return; }
-  staffNames.push(name);
-  localStorage.setItem('nippou_settings', JSON.stringify({ homes, staffNames }));
-  populateStaffDropdown(name);
-  hideStaffAddInput();
-  showToast(`${name} を追加しました`, 'success');
-  updateSubmitState();
-}
 
 function renderHomeList(homes) {
   const container = document.getElementById('home-list');
@@ -1371,8 +1387,6 @@ function initForm() {
   populateStaffDropdown('');
   document.getElementById('input-kinmu').value = '';
   document.getElementById('group-kinmu').classList.add('hidden');
-  hideStaffAddInput();
-
   // Populate home selector
   const { homes } = getSettings();
   const sel = document.getElementById('input-home');
@@ -1387,6 +1401,7 @@ function selectHome(name) {
   state.selectedHome = name || null;
   state.residentData = {};
   renderResidents();
+  populateStaffDropdown('');
   updateSubmitState();
 }
 

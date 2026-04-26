@@ -1277,14 +1277,8 @@ function renderStaffNameList(staffList) {
   _updateStaffAddBtn();
 }
 
-const MAX_STAFF = 11;
-
 function addStaffNameField() {
   const container = document.getElementById('staff-name-list');
-  if (container.children.length >= MAX_STAFF) {
-    showToast(`職員名は最大${MAX_STAFF}名まで登録できます`, 'error');
-    return;
-  }
   const idx = container.children.length;
   const item = _createStaffItem({ name: '', homes: [] }, idx);
   container.appendChild(item);
@@ -1297,8 +1291,7 @@ function _updateStaffAddBtn() {
   const btn = document.getElementById('btn-add-staff');
   if (!btn) return;
   const count = container.children.length;
-  btn.disabled = count >= MAX_STAFF;
-  btn.querySelector('.staff-count-label').textContent = `職員を追加（${count}/${MAX_STAFF}）`;
+  btn.querySelector('.staff-count-label').textContent = `職員を追加（${count}名登録中）`;
 }
 
 function populateStaffDropdown(selectedName) {
@@ -1512,11 +1505,11 @@ function renderResidentForm(name) {
       <label class="form-label">利用の有無<span class="required">*</span></label>
       <div class="toggle-group">
         <button class="toggle-btn" id="toggle-riyou-${key}-有"
-                onclick="setResidentField('${key}', 'riyou', '有'); updateResidentBadge('${key}')">
+                onclick="setResidentFieldAndToggle('${key}', 'riyou', '有'); updateResidentBadge('${key}')">
           有（利用あり）
         </button>
         <button class="toggle-btn" id="toggle-riyou-${key}-無"
-                onclick="setResidentField('${key}', 'riyou', '無'); updateResidentBadge('${key}')">
+                onclick="setResidentFieldAndToggle('${key}', 'riyou', '無'); updateResidentBadge('${key}')">
           無（外泊等）
         </button>
       </div>
@@ -1530,8 +1523,8 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">異常の有無</label>
         <div class="toggle-group">
-          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentField('${key}', 'ijo', '無')">無</button>
-          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentField('${key}', 'ijo', '有')">有</button>
+          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'ijo', '無'); updateResidentBadge('${key}')">無</button>
+          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'ijo', '有'); updateResidentBadge('${key}')">有</button>
         </div>
       </div>
       <div class="form-group">
@@ -1540,8 +1533,11 @@ function renderResidentForm(name) {
       </div>
       <div class="form-group">
         <label class="form-label">体調確認方法</label>
-        <input type="text" class="form-input" placeholder="例：起床確認、声かけ"
-               oninput="setResidentField('${key}', 'taichoHoho', this.value)">
+        <select class="form-select" onchange="setResidentField('${key}', 'taichoHoho', this.value)">
+          <option value="">選択してください</option>
+          <option value="様子から確認">様子から確認</option>
+          <option value="会話で確認">会話で確認</option>
+        </select>
       </div>
       <div class="section-divider">支援・食事</div>
       <div class="form-group">
@@ -1608,8 +1604,8 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">外泊</label>
         <div class="toggle-group">
-          <button class="toggle-btn" id="toggle-gaihaku-${key}-無" onclick="setResidentField('${key}', 'gaihaku', '無')">無</button>
-          <button class="toggle-btn" id="toggle-gaihaku-${key}-有" onclick="setResidentField('${key}', 'gaihaku', '有')">有</button>
+          <button class="toggle-btn" id="toggle-gaihaku-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'gaihaku', '無')">無</button>
+          <button class="toggle-btn" id="toggle-gaihaku-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'gaihaku', '有')">有</button>
         </div>
       </div>
       <div class="form-group">
@@ -1626,8 +1622,8 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">異常の有無</label>
         <div class="toggle-group">
-          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentField('${key}', 'ijo', '無')">無</button>
-          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentField('${key}', 'ijo', '有')">有</button>
+          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'ijo', '無'); updateResidentBadge('${key}')">無</button>
+          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'ijo', '有'); updateResidentBadge('${key}')">有</button>
         </div>
       </div>
       <div class="form-group">
@@ -1683,32 +1679,6 @@ function setResidentFieldAndToggle(key, field, value, btnId) {
   });
 }
 
-// Override onclick handlers after DOM insertion
-function setupToggleHandlers() {
-  const { residents } = getSettings();
-  residents.forEach(name => {
-    const key = safeName(name);
-    ['riyou', 'ijo', 'gaihaku'].forEach(field => {
-      ['有', '無'].forEach(value => {
-        const btn = document.getElementById(`toggle-${field}-${key}-${value}`);
-        if (btn) {
-          btn.onclick = () => {
-            setResidentField(key, field, value);
-            // Update button styles for this field
-            ['有', '無'].forEach(v => {
-              const b = document.getElementById(`toggle-${field}-${key}-${v}`);
-              if (b) {
-                b.className = 'toggle-btn';
-                if (v === value) b.className += value === '有' ? ' active-yes' : ' active-no';
-              }
-            });
-            updateResidentBadge(key);
-          };
-        }
-      });
-    });
-  });
-}
 
 function updateResidentBadge(key) {
   const badge = document.getElementById(`badge-${key}`);
@@ -1924,13 +1894,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initMsal();
 });
 
-// Re-setup toggle handlers whenever residents are rendered
-const _origRenderResidents = renderResidents;
-window.renderResidents = function() {
-  _origRenderResidents();
-  // Setup toggle handlers after DOM update
-  setTimeout(setupToggleHandlers, 0);
-};
 </script>
 </body>
 </html>

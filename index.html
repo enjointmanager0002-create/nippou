@@ -288,6 +288,32 @@
       color: var(--text-muted);
     }
 
+    /* ===== CHIP MULTI-SELECT ===== */
+    .chip-group {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip-btn {
+      padding: 9px 14px;
+      border: 2px solid var(--border);
+      border-radius: 20px;
+      background: white;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--text-muted);
+      font-family: inherit;
+    }
+
+    .chip-btn.chip-active {
+      border-color: var(--accent);
+      background: #e6f2fa;
+      color: var(--accent);
+      font-weight: 600;
+    }
+
     /* ===== TIME SLOT SELECTOR ===== */
     .time-slot-grid {
       display: grid;
@@ -625,6 +651,13 @@
       <div class="card-title">基本情報</div>
 
       <div class="form-group">
+        <label class="form-label">住居名<span class="required">*</span></label>
+        <select id="input-home" class="form-select" onchange="selectHome(this.value)">
+          <option value="">住居を選択してください</option>
+        </select>
+      </div>
+
+      <div class="form-group">
         <label class="form-label">報告日<span class="required">*</span></label>
         <input type="date" id="input-date" class="form-input" required>
       </div>
@@ -657,7 +690,22 @@
 
       <div class="form-group">
         <label class="form-label">担当職員氏名<span class="required">*</span></label>
-        <input type="text" id="input-staff-name" class="form-input" placeholder="氏名を入力" autocomplete="name">
+        <select id="input-staff-name" class="form-select" onchange="updateSubmitState()">
+          <option value="">職員を選択してください</option>
+        </select>
+        <div id="staff-add-area" style="margin-top:8px">
+          <button type="button" class="btn-add-resident" onclick="showStaffAddInput()" id="btn-show-staff-add">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            名前を追加
+          </button>
+          <div id="staff-inline-add" style="display:none;margin-top:8px;display:none">
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="text" id="input-new-staff" class="form-input" placeholder="氏名を入力" style="flex:1;margin:0">
+              <button type="button" class="btn btn-primary" style="padding:10px 16px;font-size:14px" onclick="confirmAddStaff()">追加</button>
+              <button type="button" class="btn btn-secondary" style="padding:10px 12px;font-size:14px" onclick="hideStaffAddInput()">✕</button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div id="group-kinmu" class="form-group hidden">
@@ -725,19 +773,20 @@
   <div class="settings-content">
 
     <div class="card">
-      <div class="card-title">アプリ情報</div>
-      <div class="form-group">
-        <label class="form-label">ホーム名</label>
-        <input type="text" id="setting-home-name" class="form-input" placeholder="例：下豊岡">
-      </div>
+      <div class="card-title">職員名登録</div>
+      <div id="staff-name-list"></div>
+      <button class="btn-add-resident" onclick="addStaffNameField()" style="margin-top:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+        職員を追加
+      </button>
     </div>
 
     <div class="card">
-      <div class="card-title">利用者名登録</div>
-      <div id="resident-name-list"></div>
-      <button class="btn-add-resident" onclick="addResidentField()">
+      <div class="card-title">住居・利用者設定</div>
+      <div id="home-list"></div>
+      <button class="btn-add-resident" onclick="addHomeBlock()" style="margin-top:8px">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        利用者を追加
+        住居を追加
       </button>
     </div>
 
@@ -796,7 +845,8 @@ let state = {
   excelFileId: null,
   timeSlot: null,
   staffMeal: null,
-  residentData: {},  // { name: { riyoumu, ijo, taichojikan, ... } }
+  selectedHome: null,
+  residentData: {},
 };
 
 // ==============================
@@ -1143,66 +1193,157 @@ async function appendRowFallback(rowData) {
 // SETTINGS & LOCAL STORAGE
 // ==============================
 function loadSettings() {
-  const saved = JSON.parse(localStorage.getItem('nippou_settings') || '{}');
-  document.getElementById('setting-home-name').value = saved.homeName || '下豊岡';
-
-  const residents = saved.residents || ['', '', '', '', ''];
-  renderResidentNameList(residents);
-
-  // Check if residents configured
-  const hasResidents = residents.filter(r => r.trim()).length > 0;
-  document.getElementById('main-config-banner').classList.toggle('hidden', hasResidents);
-
+  const saved = _loadRawSettings();
+  renderHomeList(saved.homes);
+  renderStaffNameList(saved.staffNames);
+  const hasAny = saved.homes.some(h => h.residents.length > 0);
+  document.getElementById('main-config-banner').classList.toggle('hidden', hasAny);
   return saved;
 }
 
 function saveSettings() {
-  const homeName = document.getElementById('setting-home-name').value.trim();
-  const residents = Array.from(document.querySelectorAll('.resident-name-input'))
-    .map(inp => inp.value.trim())
-    .filter(r => r);
-
-  localStorage.setItem('nippou_settings', JSON.stringify({ homeName, residents }));
-
-  const hasResidents = residents.length > 0;
-  document.getElementById('main-config-banner').classList.toggle('hidden', hasResidents);
-
+  const homes = _collectHomesFromDOM();
+  const staffNames = Array.from(document.querySelectorAll('.staff-name-input'))
+    .map(i => i.value.trim()).filter(Boolean);
+  localStorage.setItem('nippou_settings', JSON.stringify({ homes, staffNames }));
+  const hasAny = homes.some(h => h.residents.length > 0);
+  document.getElementById('main-config-banner').classList.toggle('hidden', hasAny);
   showScreen('main');
   initForm();
   showToast('設定を保存しました', 'success');
 }
 
 function getSettings() {
-  return JSON.parse(localStorage.getItem('nippou_settings') || '{"homeName":"下豊岡","residents":[]}');
+  return _loadRawSettings();
 }
 
-function renderResidentNameList(residents) {
-  const container = document.getElementById('resident-name-list');
+function _loadRawSettings() {
+  const raw = JSON.parse(localStorage.getItem('nippou_settings') || '{}');
+  if (!raw.homes && raw.homeName) {
+    return { homes: [{ name: raw.homeName, residents: raw.residents || [] }], staffNames: raw.staffNames || [] };
+  }
+  return { homes: raw.homes || [], staffNames: raw.staffNames || [] };
+}
+
+function _collectHomesFromDOM() {
+  return Array.from(document.querySelectorAll('.home-block')).map(block => ({
+    name: block.querySelector('.home-name-input').value.trim(),
+    residents: Array.from(block.querySelectorAll('.resident-name-input'))
+      .map(i => i.value.trim()).filter(Boolean)
+  })).filter(h => h.name);
+}
+
+function renderStaffNameList(staffNames) {
+  const container = document.getElementById('staff-name-list');
   container.innerHTML = '';
-  residents.forEach((name, i) => {
+  staffNames.forEach((name, i) => {
     const div = document.createElement('div');
     div.className = 'resident-list-item';
     div.innerHTML = `
-      <input type="text" class="resident-list-input resident-name-input"
-             value="${escHtml(name)}" placeholder="利用者 ${i + 1}"
-             style="flex:1">
+      <input type="text" class="resident-list-input staff-name-input"
+             value="${escHtml(name)}" placeholder="職員 ${i + 1}" style="flex:1">
       <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
     `;
     container.appendChild(div);
   });
 }
 
-function addResidentField() {
-  const container = document.getElementById('resident-name-list');
+function addStaffNameField() {
+  const container = document.getElementById('staff-name-list');
   const div = document.createElement('div');
   div.className = 'resident-list-item';
   const idx = container.children.length + 1;
   div.innerHTML = `
-    <input type="text" class="resident-list-input resident-name-input"
-           value="" placeholder="利用者 ${idx}" style="flex:1">
+    <input type="text" class="resident-list-input staff-name-input"
+           value="" placeholder="職員 ${idx}" style="flex:1">
     <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
   `;
   container.appendChild(div);
+  div.querySelector('input').focus();
+}
+
+function populateStaffDropdown(selectedName) {
+  const { staffNames } = _loadRawSettings();
+  const sel = document.getElementById('input-staff-name');
+  const current = selectedName || sel.value;
+  sel.innerHTML = '<option value="">職員を選択してください</option>' +
+    staffNames.map(n => `<option value="${escHtml(n)}"${n === current ? ' selected' : ''}>${escHtml(n)}</option>`).join('');
+  if (current && staffNames.includes(current)) sel.value = current;
+}
+
+function showStaffAddInput() {
+  document.getElementById('btn-show-staff-add').style.display = 'none';
+  const area = document.getElementById('staff-inline-add');
+  area.style.display = 'block';
+  document.getElementById('input-new-staff').focus();
+}
+
+function hideStaffAddInput() {
+  document.getElementById('staff-inline-add').style.display = 'none';
+  document.getElementById('btn-show-staff-add').style.display = '';
+  document.getElementById('input-new-staff').value = '';
+}
+
+function confirmAddStaff() {
+  const input = document.getElementById('input-new-staff');
+  const name = input.value.trim();
+  if (!name) { showToast('氏名を入力してください', 'error'); return; }
+  const { homes, staffNames } = _loadRawSettings();
+  if (staffNames.includes(name)) { showToast('すでに登録されています', 'error'); return; }
+  staffNames.push(name);
+  localStorage.setItem('nippou_settings', JSON.stringify({ homes, staffNames }));
+  populateStaffDropdown(name);
+  hideStaffAddInput();
+  showToast(`${name} を追加しました`, 'success');
+  updateSubmitState();
+}
+
+function renderHomeList(homes) {
+  const container = document.getElementById('home-list');
+  container.innerHTML = '';
+  homes.forEach((home, idx) => renderHomeBlock(container, home, idx));
+}
+
+function renderHomeBlock(container, home, idx) {
+  const div = document.createElement('div');
+  div.className = 'home-block';
+  div.style.cssText = 'border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px';
+  div.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <input type="text" class="home-name-input form-input" value="${escHtml(home.name)}"
+             placeholder="住居名（例：下豊岡）" style="flex:1;margin:0">
+      <button class="btn-icon" onclick="this.closest('.home-block').remove()" title="住居削除" style="flex-shrink:0">✕</button>
+    </div>
+    <div class="resident-name-list" style="margin-bottom:8px">
+      ${home.residents.map((r, i) => `
+        <div class="resident-list-item">
+          <input type="text" class="resident-list-input resident-name-input" value="${escHtml(r)}" placeholder="利用者 ${i+1}" style="flex:1">
+          <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
+        </div>`).join('')}
+    </div>
+    <button class="btn-add-resident" style="font-size:12px;padding:6px 12px" onclick="addResidentToBlock(this)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+      利用者を追加
+    </button>
+  `;
+  container.appendChild(div);
+}
+
+function addHomeBlock() {
+  const container = document.getElementById('home-list');
+  renderHomeBlock(container, { name: '', residents: [''] }, container.children.length);
+}
+
+function addResidentToBlock(btn) {
+  const list = btn.previousElementSibling;
+  const idx = list.children.length + 1;
+  const div = document.createElement('div');
+  div.className = 'resident-list-item';
+  div.innerHTML = `
+    <input type="text" class="resident-list-input resident-name-input" value="" placeholder="利用者 ${idx}" style="flex:1">
+    <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
+  `;
+  list.appendChild(div);
 }
 
 function removeResidentField(btn) {
@@ -1222,14 +1363,29 @@ function initForm() {
   document.getElementById('input-date').value = today.toISOString().slice(0, 10);
   state.timeSlot = null;
   state.staffMeal = null;
+  state.selectedHome = null;
   state.residentData = {};
 
   document.querySelectorAll('.time-slot-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.toggle-btn').forEach(b => b.className = 'toggle-btn');
-  document.getElementById('input-staff-name').value = '';
+  populateStaffDropdown('');
   document.getElementById('input-kinmu').value = '';
   document.getElementById('group-kinmu').classList.add('hidden');
+  hideStaffAddInput();
 
+  // Populate home selector
+  const { homes } = getSettings();
+  const sel = document.getElementById('input-home');
+  sel.innerHTML = '<option value="">住居を選択してください</option>' +
+    homes.filter(h => h.name).map(h => `<option value="${escHtml(h.name)}">${escHtml(h.name)}</option>`).join('');
+
+  renderResidents();
+  updateSubmitState();
+}
+
+function selectHome(name) {
+  state.selectedHome = name || null;
+  state.residentData = {};
   renderResidents();
   updateSubmitState();
 }
@@ -1255,9 +1411,17 @@ function renderResidents() {
   const container = document.getElementById('residents-container');
   container.innerHTML = '';
 
-  const { residents } = getSettings();
-  if (!residents || residents.length === 0) {
-    container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">設定から利用者名を登録してください</div>';
+  if (!state.selectedHome) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">住居を選択してください</div>';
+    return;
+  }
+
+  const { homes } = getSettings();
+  const home = homes.find(h => h.name === state.selectedHome);
+  const residents = home ? home.residents.filter(Boolean) : [];
+
+  if (!residents.length) {
+    container.innerHTML = '<div style="color:var(--text-muted);font-size:13px;padding:8px 0">設定からこの住居の利用者名を登録してください</div>';
     return;
   }
 
@@ -1266,9 +1430,7 @@ function renderResidents() {
     return;
   }
 
-  residents.forEach(name => {
-    container.appendChild(createResidentBlock(name));
-  });
+  residents.forEach(name => container.appendChild(createResidentBlock(name)));
 }
 
 function createResidentBlock(name) {
@@ -1292,6 +1454,38 @@ function createResidentBlock(name) {
   `;
 
   return div;
+}
+
+const SHIEN_OPTIONS = ['服薬支援','食事提供','片付け','掃除','洗濯','排泄援助','入浴援助','整容','相談支援','買い物','金銭管理'];
+const FOOD_OPTIONS  = ['ご飯一式提供','おかずのみ提供','提供無し'];
+
+function shienChips(key) {
+  return `<div class="chip-group">${SHIEN_OPTIONS.map(o =>
+    `<button class="chip-btn" onclick="toggleShienChip('${key}','${o}',this)">${o}</button>`
+  ).join('')}</div>`;
+}
+
+function foodToggle(key, field) {
+  return `<div class="toggle-group">${FOOD_OPTIONS.map(o =>
+    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this)">${o}</button>`
+  ).join('')}</div>`;
+}
+
+function toggleShienChip(key, value, el) {
+  if (!state.residentData[key]) state.residentData[key] = {};
+  const parts = new Set((state.residentData[key].shien || '').split('、').filter(Boolean));
+  if (parts.has(value)) { parts.delete(value); el.classList.remove('chip-active'); }
+  else                   { parts.add(value);    el.classList.add('chip-active'); }
+  state.residentData[key].shien = Array.from(parts).join('、');
+  updateResidentBadge(key);
+  updateSubmitState();
+}
+
+function setFood(key, field, value, el) {
+  setResidentField(key, field, value);
+  el.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  updateResidentBadge(key);
 }
 
 function renderResidentForm(name) {
@@ -1337,18 +1531,15 @@ function renderResidentForm(name) {
       <div class="section-divider">支援・食事</div>
       <div class="form-group">
         <label class="form-label">支援内容</label>
-        <textarea class="form-textarea" placeholder="支援した内容を記入"
-                  oninput="setResidentField('${key}', 'shien', this.value)"></textarea>
+        ${shienChips(key)}
       </div>
       <div class="form-group">
         <label class="form-label">朝食内容</label>
-        <input type="text" class="form-input" placeholder="例：ご飯、味噌汁、卵焼き"
-               oninput="setResidentField('${key}', 'shokuji', this.value)">
+        ${foodToggle(key, 'shokuji')}
       </div>
       <div class="form-group">
         <label class="form-label">昼食準備</label>
-        <input type="text" class="form-input" placeholder="昼食の準備内容"
-               oninput="setResidentField('${key}', 'chushokuJunbi', this.value)">
+        ${foodToggle(key, 'chushokuJunbi')}
       </div>
       <div class="form-group">
         <label class="form-label">備考（相談内容・支援内容等）</label>
@@ -1376,13 +1567,11 @@ function renderResidentForm(name) {
       <div class="section-divider">支援・食事</div>
       <div class="form-group">
         <label class="form-label">支援内容</label>
-        <textarea class="form-textarea" placeholder="支援した内容を記入"
-                  oninput="setResidentField('${key}', 'shien', this.value)"></textarea>
+        ${shienChips(key)}
       </div>
       <div class="form-group">
         <label class="form-label">夕食内容</label>
-        <input type="text" class="form-input" placeholder="例：ご飯、肉じゃが、味噌汁"
-               oninput="setResidentField('${key}', 'shokuji', this.value)">
+        ${foodToggle(key, 'shokuji')}
       </div>
       <div class="form-group">
         <label class="form-label">連携及び調整</label>
@@ -1537,8 +1726,9 @@ function updateSubmitState() {
   const date = document.getElementById('input-date').value;
   const staff = document.getElementById('input-staff-name').value.trim();
   const hasSlot = !!state.timeSlot;
+  const hasHome = !!state.selectedHome;
 
-  btn.disabled = !(date && staff && hasSlot);
+  btn.disabled = !(date && staff && hasSlot && hasHome);
 }
 
 // ==============================
@@ -1554,11 +1744,18 @@ async function submitForm() {
     return;
   }
 
-  const { homeName, residents } = getSettings();
-  if (!residents || residents.length === 0) {
+  if (!state.selectedHome) {
+    showToast('住居を選択してください', 'error');
+    return;
+  }
+  const { homes } = getSettings();
+  const homeObj = homes.find(h => h.name === state.selectedHome) || { name: state.selectedHome, residents: [] };
+  const residents = homeObj.residents.filter(Boolean);
+  if (!residents.length) {
     showToast('先に設定から利用者名を登録してください', 'error');
     return;
   }
+  const homeName = state.selectedHome;
 
   setLoading('保存中...');
 
@@ -1614,16 +1811,20 @@ async function submitForm() {
 }
 
 function goToNextEntry() {
-  // Keep staff name, date, and time slot — just clear resident data
   const staffName = document.getElementById('input-staff-name').value;
   const date = document.getElementById('input-date').value;
   const slot = state.timeSlot;
+  const home = state.selectedHome;
 
   state.residentData = {};
   showScreen('main');
 
   document.getElementById('input-date').value = date;
   document.getElementById('input-staff-name').value = staffName;
+  if (home) {
+    document.getElementById('input-home').value = home;
+    selectHome(home);
+  }
   selectTimeSlot(slot);
 }
 

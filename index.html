@@ -898,6 +898,7 @@ class MinimalAuth {
     const seg = (data.id_token || '..').split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
     const pay = JSON.parse(decodeURIComponent(atob(seg).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
     localStorage.setItem('_auth', JSON.stringify({
+      v: 2,
       accessToken: data.access_token,
       refreshToken: data.refresh_token,
       exp: Date.now() + data.expires_in * 1000,
@@ -906,7 +907,11 @@ class MinimalAuth {
   }
 
   _cache() {
-    try { return JSON.parse(localStorage.getItem('_auth')); } catch { return null; }
+    try {
+      const c = JSON.parse(localStorage.getItem('_auth'));
+      if (!c || c.v !== 2) return null;
+      return c;
+    } catch { return null; }
   }
 
   _rnd(n = 32) {

@@ -223,6 +223,39 @@
     }
     .field-error.visible { display: block; }
 
+    .kubun-section {
+      display: none;
+      margin-top: 8px;
+      padding: 10px;
+      background: #f4f7fb;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .kubun-section.open { display: block; }
+    .kubun-period-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 6px;
+      flex-wrap: nowrap;
+    }
+    .kubun-period-row input, .kubun-period-row select {
+      padding: 5px 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 12px;
+      background: white;
+    }
+    .kubun-badge {
+      font-size: 11px;
+      background: #e3f2fd;
+      color: #1565c0;
+      padding: 2px 7px;
+      border-radius: 4px;
+      margin-left: 6px;
+      font-weight: 600;
+    }
+
     .form-input,
     .form-select,
     .form-textarea {
@@ -1229,6 +1262,13 @@ function _loadRawSettings() {
   if (!raw.homes && raw.homeName) {
     homes = [{ name: raw.homeName, residents: raw.residents || [] }];
   }
+  // migrate residents: string[] → {name, kubuns}[]
+  homes = homes.map(h => ({
+    ...h,
+    residents: (h.residents || []).map(r =>
+      typeof r === 'string' ? { name: r, kubuns: [] } : r
+    )
+  }));
   // migrate staffNames: string[] → {name, homes}[]
   const rawStaff = raw.staffNames || [];
   const staffNames = rawStaff.map(s => typeof s === 'string' ? { name: s, homes: [] } : s);
@@ -1238,9 +1278,54 @@ function _loadRawSettings() {
 function _collectHomesFromDOM() {
   return Array.from(document.querySelectorAll('.home-block')).map(block => ({
     name: block.querySelector('.home-name-input').value.trim(),
-    residents: Array.from(block.querySelectorAll('.resident-name-input'))
-      .map(i => i.value.trim()).filter(Boolean)
+    residents: Array.from(block.querySelectorAll('.resident-list-item')).map(item => {
+      const name = item.querySelector('.resident-name-input').value.trim();
+      const kubuns = Array.from(item.querySelectorAll('.kubun-period-row')).map(row => ({
+        kubun: row.querySelector('.kubun-select').value,
+        from: row.querySelector('.kubun-from').value,
+        to:   row.querySelector('.kubun-to').value
+      })).filter(k => k.kubun);
+      return { name, kubuns };
+    }).filter(r => r.name)
   })).filter(h => h.name);
+}
+
+const KUBUN_OPTIONS = ['区分なし','区分1','区分2','区分3','区分4','区分5','区分6'];
+
+function _kubunPeriodHtml(k) {
+  k = k || { kubun: '区分なし', from: '', to: '' };
+  return `
+    <div class="kubun-period-row">
+      <select class="kubun-select" style="flex:0 0 80px">
+        ${KUBUN_OPTIONS.map(o => `<option${o === k.kubun ? ' selected' : ''}>${o}</option>`).join('')}
+      </select>
+      <input type="date" class="kubun-from" value="${k.from || ''}" style="flex:1;min-width:0">
+      <span style="font-size:12px;color:#888">〜</span>
+      <input type="date" class="kubun-to" value="${k.to || ''}" style="flex:1;min-width:0">
+      <button class="btn-icon" onclick="this.closest('.kubun-period-row').remove()" title="削除">✕</button>
+    </div>`;
+}
+
+function toggleKubunSection(btn) {
+  btn.closest('.resident-list-item').querySelector('.kubun-section').classList.toggle('open');
+}
+
+function addKubunPeriod(btn) {
+  const section = btn.closest('.kubun-section');
+  const tmp = document.createElement('div');
+  tmp.innerHTML = _kubunPeriodHtml(null);
+  section.insertBefore(tmp.firstElementChild, btn);
+}
+
+function getKubunForDate(kubuns, dateStr) {
+  if (!kubuns || !kubuns.length) return null;
+  const d = dateStr ? new Date(dateStr) : new Date();
+  for (const k of kubuns) {
+    const from = k.from ? new Date(k.from) : new Date('2000-01-01');
+    const to   = k.to   ? new Date(k.to)   : new Date('2099-12-31');
+    if (d >= from && d <= to) return k.kubun;
+  }
+  return null;
 }
 
 function _getHomeNamesFromDOM() {
@@ -1318,6 +1403,23 @@ function renderHomeList(homes) {
   homes.forEach((home, idx) => renderHomeBlock(container, home, idx));
 }
 
+function _residentItemHtml(r, i) {
+  const res = typeof r === 'string' ? { name: r, kubuns: [] } : r;
+  const kubunRows = (res.kubuns || []).map(k => _kubunPeriodHtml(k)).join('');
+  return `
+    <div class="resident-list-item" style="flex-wrap:wrap;padding:8px 4px">
+      <div style="display:flex;align-items:center;gap:6px;width:100%">
+        <input type="text" class="resident-list-input resident-name-input" value="${escHtml(res.name)}" placeholder="利用者 ${i+1}" style="flex:1;margin:0">
+        <button class="btn-secondary" style="font-size:11px;padding:4px 8px;flex-shrink:0" onclick="toggleKubunSection(this)">区分</button>
+        <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
+      </div>
+      <div class="kubun-section">
+        ${kubunRows}
+        <button class="btn-secondary" style="font-size:11px;padding:4px 10px;margin-top:4px" onclick="addKubunPeriod(this)">＋ 期間を追加</button>
+      </div>
+    </div>`;
+}
+
 function renderHomeBlock(container, home, idx) {
   const div = document.createElement('div');
   div.className = 'home-block';
@@ -1329,11 +1431,7 @@ function renderHomeBlock(container, home, idx) {
       <button class="btn-icon" onclick="this.closest('.home-block').remove()" title="住居削除" style="flex-shrink:0">✕</button>
     </div>
     <div class="resident-name-list" style="margin-bottom:8px">
-      ${home.residents.map((r, i) => `
-        <div class="resident-list-item">
-          <input type="text" class="resident-list-input resident-name-input" value="${escHtml(r)}" placeholder="利用者 ${i+1}" style="flex:1">
-          <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
-        </div>`).join('')}
+      ${(home.residents || []).map((r, i) => _residentItemHtml(r, i)).join('')}
     </div>
     <button class="btn-add-resident" style="font-size:12px;padding:6px 12px" onclick="addResidentToBlock(this)">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
@@ -1345,19 +1443,15 @@ function renderHomeBlock(container, home, idx) {
 
 function addHomeBlock() {
   const container = document.getElementById('home-list');
-  renderHomeBlock(container, { name: '', residents: [''] }, container.children.length);
+  renderHomeBlock(container, { name: '', residents: [{ name: '', kubuns: [] }] }, container.children.length);
 }
 
 function addResidentToBlock(btn) {
   const list = btn.previousElementSibling;
   const idx = list.children.length + 1;
-  const div = document.createElement('div');
-  div.className = 'resident-list-item';
-  div.innerHTML = `
-    <input type="text" class="resident-list-input resident-name-input" value="" placeholder="利用者 ${idx}" style="flex:1">
-    <button class="btn-icon" onclick="removeResidentField(this)" title="削除">✕</button>
-  `;
-  list.appendChild(div);
+  const tmp = document.createElement('div');
+  tmp.innerHTML = _residentItemHtml({ name: '', kubuns: [] }, idx);
+  list.appendChild(tmp.firstElementChild);
 }
 
 function removeResidentField(btn) {
@@ -1444,19 +1538,27 @@ function renderResidents() {
     return;
   }
 
-  residents.forEach(name => container.appendChild(createResidentBlock(name)));
+  const reportDate = document.getElementById('input-date')?.value || '';
+  residents.forEach(r => {
+    const res = typeof r === 'string' ? { name: r, kubuns: [] } : r;
+    container.appendChild(createResidentBlock(res, reportDate));
+  });
 }
 
-function createResidentBlock(name) {
+function createResidentBlock(resident, reportDate) {
+  const name = typeof resident === 'string' ? resident : resident.name;
+  const kubuns = (typeof resident === 'object' && resident.kubuns) ? resident.kubuns : [];
+  const kubun = getKubunForDate(kubuns, reportDate);
+  const key = safeName(name);
   const div = document.createElement('div');
   div.className = 'resident-block';
-  div.id = `block-${safeName(name)}`;
+  div.id = `block-${key}`;
 
   div.innerHTML = `
-    <div class="resident-header" onclick="toggleResident('${safeName(name)}')">
-      <span class="resident-name">${escHtml(name)}</span>
+    <div class="resident-header" onclick="toggleResident('${key}')">
+      <span class="resident-name">${escHtml(name)}${kubun ? `<span class="kubun-badge">${escHtml(kubun)}</span>` : ''}</span>
       <div class="resident-status">
-        <span class="resident-badge badge-absent" id="badge-${safeName(name)}">未入力</span>
+        <span class="resident-badge badge-absent" id="badge-${key}">未入力</span>
         <svg class="resident-chevron" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
           <path d="M7 10l5 5 5-5z"/>
         </svg>
@@ -1782,7 +1884,8 @@ function validateForm() {
   const { homes } = getSettings();
   const homeObj = homes.find(h => h.name === state.selectedHome);
   const residents = homeObj ? homeObj.residents.filter(Boolean) : [];
-  for (const name of residents) {
+  for (const r of residents) {
+    const name = typeof r === 'string' ? r : r.name;
     const key = safeName(name);
     const d = state.residentData[key] || {};
     setErr(`error-riyou-${key}`, !d.riyou);
@@ -1839,7 +1942,8 @@ async function submitForm() {
     const now = new Date().toLocaleString('ja-JP');
     let savedCount = 0;
 
-    for (const name of residents) {
+    for (const r of residents) {
+      const name = typeof r === 'string' ? r : r.name;
       const key = safeName(name);
       const d = state.residentData[key] || {};
 

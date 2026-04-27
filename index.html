@@ -215,6 +215,14 @@
       margin-left: 3px;
     }
 
+    .field-error {
+      display: none;
+      color: #c62828;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .field-error.visible { display: block; }
+
     .form-input,
     .form-select,
     .form-textarea {
@@ -690,25 +698,28 @@
 
       <div class="form-group">
         <label class="form-label">担当職員氏名<span class="required">*</span></label>
-        <select id="input-staff-name" class="form-select" onchange="updateSubmitState()">
+        <select id="input-staff-name" class="form-select" onchange="updateSubmitState(); clearError('error-staff-name')">
           <option value="">職員を選択してください</option>
         </select>
+        <p class="field-error" id="error-staff-name">この項目が入力されていません</p>
         <p style="font-size:12px;color:#888;margin:4px 0 0">職員名は設定画面から追加・管理できます</p>
       </div>
 
       <div id="group-kinmu" class="form-group hidden">
-        <label class="form-label">勤務体系</label>
-        <select id="input-kinmu" class="form-select">
+        <label class="form-label">勤務体系<span class="required">*</span></label>
+        <select id="input-kinmu" class="form-select" onchange="clearError('error-kinmu')">
           <option value="">選択してください</option>
         </select>
+        <p class="field-error" id="error-kinmu">この項目が入力されていません</p>
       </div>
 
       <div class="form-group">
-        <label class="form-label">職員食事</label>
+        <label class="form-label">職員食事<span class="required">*</span></label>
         <div class="toggle-group">
           <button class="toggle-btn" id="toggle-staff-meal-yes" onclick="toggleSelect('staff-meal', '有')">有</button>
           <button class="toggle-btn" id="toggle-staff-meal-no" onclick="toggleSelect('staff-meal', '無')">無</button>
         </div>
+        <p class="field-error" id="error-staff-meal">この項目が入力されていません</p>
       </div>
     </div>
 
@@ -1472,15 +1483,15 @@ function shienChips(key) {
   ).join('')}</div>`;
 }
 
-function foodToggle(key, field) {
+function foodToggle(key, field, errorId) {
   return `<div class="toggle-group">${FOOD_OPTIONS.map(o =>
-    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this)">${o}</button>`
+    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this);${errorId ? `clearError('${errorId}')` : ''}">${o}</button>`
   ).join('')}</div>`;
 }
 
-function yushokuToggle(key, field) {
+function yushokuToggle(key, field, errorId) {
   return `<div class="toggle-group">${YUSHOKU_OPTIONS.map(o =>
-    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this)">${o}</button>`
+    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this);${errorId ? `clearError('${errorId}')` : ''}">${o}</button>`
   ).join('')}</div>`;
 }
 
@@ -1518,14 +1529,15 @@ function renderResidentForm(name) {
       <label class="form-label">利用の有無<span class="required">*</span></label>
       <div class="toggle-group">
         <button class="toggle-btn" id="toggle-riyou-${key}-有"
-                onclick="setResidentFieldAndToggle('${key}', 'riyou', '有'); updateResidentBadge('${key}')">
+                onclick="setResidentFieldAndToggle('${key}', 'riyou', '有'); updateResidentBadge('${key}'); clearError('error-riyou-${key}')">
           有（利用あり）
         </button>
         <button class="toggle-btn" id="toggle-riyou-${key}-無"
-                onclick="setResidentFieldAndToggle('${key}', 'riyou', '無'); updateResidentBadge('${key}')">
+                onclick="setResidentFieldAndToggle('${key}', 'riyou', '無'); updateResidentBadge('${key}'); clearError('error-riyou-${key}')">
           無（外泊等）
         </button>
       </div>
+      <p class="field-error" id="error-riyou-${key}">この項目が入力されていません</p>
     </div>
   `;
 
@@ -1559,7 +1571,8 @@ function renderResidentForm(name) {
       </div>
       <div class="form-group">
         <label class="form-label">朝食準備<span class="required">*</span></label>
-        ${foodToggle(key, 'shokuji')}
+        ${foodToggle(key, 'shokuji', 'error-shokuji-' + key)}
+        <p class="field-error" id="error-shokuji-${key}">この項目が入力されていません</p>
       </div>
       <div class="form-group">
         <label class="form-label">朝食内容</label>
@@ -1568,7 +1581,8 @@ function renderResidentForm(name) {
       </div>
       <div class="form-group">
         <label class="form-label">昼食準備<span class="required">*</span></label>
-        ${foodToggle(key, 'chushokuJunbi')}
+        ${foodToggle(key, 'chushokuJunbi', 'error-chushokuJunbi-' + key)}
+        <p class="field-error" id="error-chushokuJunbi-${key}">この項目が入力されていません</p>
       </div>
       <div class="form-group">
         <label class="form-label">昼食内容</label>
@@ -1606,8 +1620,9 @@ function renderResidentForm(name) {
         ${shienChips(key)}
       </div>
       <div class="form-group">
-        <label class="form-label">夕食準備</label>
-        ${yushokuToggle(key, 'shokuji')}
+        <label class="form-label">夕食準備<span class="required">*</span></label>
+        ${yushokuToggle(key, 'shokuji', 'error-shokuji-' + key)}
+        <p class="field-error" id="error-shokuji-${key}">この項目が入力されていません</p>
       </div>
       <div class="form-group">
         <label class="form-label">夕食内容</label>
@@ -1681,13 +1696,13 @@ function setResidentField(key, field, value) {
 }
 
 function toggleSelect(group, value) {
-  // For staff-meal
   if (group === 'staff-meal') {
     state.staffMeal = value;
     const yesBtn = document.getElementById('toggle-staff-meal-yes');
     const noBtn = document.getElementById('toggle-staff-meal-no');
     yesBtn.className = 'toggle-btn' + (value === '有' ? ' active-yes' : '');
     noBtn.className = 'toggle-btn' + (value === '無' ? ' active-no' : '');
+    clearError('error-staff-meal');
   }
 }
 
@@ -1734,39 +1749,76 @@ function toggleResident(key) {
   if (block) block.classList.toggle('open');
 }
 
+function clearError(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('visible');
+}
+
+function validateForm() {
+  let hasErrors = false;
+  const slot = state.timeSlot;
+
+  const setErr = (id, show) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('visible', show);
+    if (show) hasErrors = true;
+  };
+
+  // 全時間帯: 職員氏名
+  setErr('error-staff-name', !document.getElementById('input-staff-name').value.trim());
+
+  // 早朝・日中: 職員食事
+  if (slot === '早朝' || slot === '日中') {
+    setErr('error-staff-meal', !state.staffMeal);
+  }
+
+  // 日中のみ: 勤務体系
+  if (slot === '日中') {
+    setErr('error-kinmu', !document.getElementById('input-kinmu').value);
+  }
+
+  // 利用者別
+  const { homes } = getSettings();
+  const homeObj = homes.find(h => h.name === state.selectedHome);
+  const residents = homeObj ? homeObj.residents.filter(Boolean) : [];
+  for (const name of residents) {
+    const key = safeName(name);
+    const d = state.residentData[key] || {};
+    setErr(`error-riyou-${key}`, !d.riyou);
+    if (slot === '早朝') {
+      setErr(`error-shokuji-${key}`, !d.shokuji);
+      setErr(`error-chushokuJunbi-${key}`, !d.chushokuJunbi);
+    }
+    if (slot === '日中') {
+      setErr(`error-shokuji-${key}`, !d.shokuji);
+    }
+  }
+
+  if (hasErrors) {
+    const first = document.querySelector('.field-error.visible');
+    if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast('未入力の必須項目があります', 'error');
+  }
+  return !hasErrors;
+}
+
 function updateSubmitState() {
   const btn = document.getElementById('btn-submit');
   const date = document.getElementById('input-date').value;
   const staff = document.getElementById('input-staff-name').value.trim();
-  const hasSlot = !!state.timeSlot;
-  const hasHome = !!state.selectedHome;
-
-  let foodOk = true;
-  if (state.timeSlot === '早朝' && state.selectedHome) {
-    const { homes } = getSettings();
-    const homeObj = homes.find(h => h.name === state.selectedHome);
-    const residents = homeObj ? homeObj.residents.filter(Boolean) : [];
-    for (const name of residents) {
-      const d = state.residentData[safeName(name)] || {};
-      if (!d.shokuji || !d.chushokuJunbi) { foodOk = false; break; }
-    }
-  }
-
-  btn.disabled = !(date && staff && hasSlot && hasHome && foodOk);
+  btn.disabled = !(date && staff && state.timeSlot && state.selectedHome);
 }
 
 // ==============================
 // FORM SUBMISSION
 // ==============================
 async function submitForm() {
+  if (!validateForm()) return;
+
   const date = document.getElementById('input-date').value;
   const staffName = document.getElementById('input-staff-name').value.trim();
   const kinmu = document.getElementById('input-kinmu').value;
-
-  if (!date || !staffName || !state.timeSlot) {
-    showToast('日付・時間帯・職員名を入力してください', 'error');
-    return;
-  }
 
   if (!state.selectedHome) {
     showToast('住居を選択してください', 'error');

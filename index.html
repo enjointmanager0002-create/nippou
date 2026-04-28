@@ -817,10 +817,37 @@
       </button>
     </div>
 
-    <div class="card">
-      <div class="card-title">OneDrive連携</div>
+    <div class="card" id="card-connection">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div class="card-title" style="margin:0">接続設定</div>
+        <span style="font-size:12px;color:var(--text-muted)">🔒 管理者専用</span>
+      </div>
       <div id="excel-status" style="font-size:13px;color:var(--text-muted);margin-bottom:12px">確認中...</div>
-      <button class="btn btn-secondary" onclick="resetExcelFile()">データファイルを再作成</button>
+      <div id="admin-locked-area">
+        <button class="btn btn-secondary" style="font-size:13px" onclick="showAdminUnlock()">
+          管理者設定を開く
+        </button>
+      </div>
+      <div id="admin-unlocked-area" style="display:none">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+          保存先：SharePoint (<code id="sharepoint-site-url" style="font-size:11px;word-break:break-all"></code>)
+        </div>
+        <button class="btn btn-secondary" onclick="resetExcelFile()">データファイルを再作成</button>
+      </div>
+    </div>
+
+    <!-- 管理者PINモーダル -->
+    <div id="admin-pin-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center">
+      <div style="background:#fff;border-radius:16px;padding:24px;width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+        <div style="font-size:16px;font-weight:700;margin-bottom:16px;text-align:center">管理者PIN</div>
+        <input id="admin-pin-input" type="password" inputmode="numeric" maxlength="8"
+               class="form-input" placeholder="PINを入力" style="text-align:center;font-size:20px;letter-spacing:6px;margin-bottom:8px">
+        <div id="admin-pin-error" style="display:none;color:#c62828;font-size:12px;text-align:center;margin-bottom:8px">PINが正しくありません</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-secondary" style="flex:1" onclick="hideAdminUnlock()">キャンセル</button>
+          <button class="btn btn-primary" style="flex:1" onclick="checkAdminPin()">確認</button>
+        </div>
+      </div>
     </div>
 
     <div class="btn-row" style="margin-top:8px">
@@ -843,11 +870,21 @@ const CONFIG = {
 
   authority: 'https://login.microsoftonline.com/f0796f06-778d-4183-b5d9-4cce701de452',
   redirectUri: location.origin + (location.pathname.endsWith('index.html') ? location.pathname : location.pathname.replace(/\/?$/, '/index.html')),
-  scopes: ['Files.ReadWrite', 'User.Read'],
+  scopes: ['Files.ReadWrite.All', 'Sites.ReadWrite.All', 'User.Read'],
 
-  // OneDriveに保存するExcelファイルのパス（変更不要）
+  // 保存先モード: 'sharepoint' | 'onedrive'
+  storageMode: 'sharepoint',
+
+  // SharePoint サイトURL（storageMode:'sharepoint' の場合に設定）
+  // 例: 'https://yourtenant.sharepoint.com/sites/yoursite'
+  sharepointSiteUrl: 'https://yourtenant.sharepoint.com/sites/yoursite',
+
+  // 保存先フォルダ・ファイル名
   excelFolderName: '電子日報データ',
   excelFileName: '日報記録.xlsx',
+
+  // 管理者PINコード（設定画面の接続設定へのアクセスに使用）
+  adminPin: '1234',
 
   // テーブル名
   tableName: '日報テーブル',
@@ -870,6 +907,7 @@ let state = {
   account: null,
   token: null,
   excelFileId: null,
+  sharepointDriveId: null,
   timeSlot: null,
   staffMeal: null,
   selectedHome: null,
@@ -1102,16 +1140,38 @@ async function callGraphBinary(endpoint, method, data) {
 }
 
 // ==============================
+// DRIVE PATH HELPERS (OneDrive / SharePoint 共通)
+// ==============================
+function driveApi(suffix) {
+  if (CONFIG.storageMode === 'sharepoint' && state.sharepointDriveId) {
+    return `/drives/${state.sharepointDriveId}${suffix}`;
+  }
+  return `/me/drive${suffix}`;
+}
+
+function driveItem(id) {
+  return driveApi(`/items/${id}`);
+}
+
+async function initSharepointDrive() {
+  if (CONFIG.storageMode !== 'sharepoint') return;
+  if (state.sharepointDriveId) return;
+  const url = new URL(CONFIG.sharepointSiteUrl);
+  const site = await callGraph(`/sites/${url.hostname}:${url.pathname}`);
+  const drive = await callGraph(`/sites/${site.id}/drive`);
+  state.sharepointDriveId = drive.id;
+}
+
+// ==============================
 // EXCEL FILE MANAGEMENT
 // ==============================
 async function initExcelFile() {
   try {
-    // Check if file already exists
-    const file = await callGraph(`/me/drive/root:/${CONFIG.excelFolderName}/${CONFIG.excelFileName}`);
+    await initSharepointDrive();
+    const file = await callGraph(driveApi(`/root:/${CONFIG.excelFolderName}/${CONFIG.excelFileName}`));
     state.excelFileId = file.id;
     updateExcelStatus('接続済み');
   } catch {
-    // Create it
     await createExcelDatabase();
     updateExcelStatus('新規作成完了');
   }
@@ -1121,9 +1181,11 @@ async function initExcelFile() {
 const EXCEL_TEMPLATE_B64 = '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';
 
 async function createExcelDatabase() {
+  await initSharepointDrive();
+
   // フォルダ作成
   try {
-    await callGraph('/me/drive/root/children', 'POST', {
+    await callGraph(driveApi('/root/children'), 'POST', {
       name: CONFIG.excelFolderName,
       folder: {},
       '@microsoft.graph.conflictBehavior': 'replace'
@@ -1136,7 +1198,7 @@ async function createExcelDatabase() {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
   const uploadResult = await callGraphBinary(
-    `/me/drive/root:/${CONFIG.excelFolderName}/${CONFIG.excelFileName}:/content`,
+    driveApi(`/root:/${CONFIG.excelFolderName}/${CONFIG.excelFileName}:/content`),
     'PUT',
     bytes
   );
@@ -1146,18 +1208,18 @@ async function createExcelDatabase() {
   await new Promise(r => setTimeout(r, 2000));
 
   try {
-    const wsInfo = await callGraph(`/me/drive/items/${state.excelFileId}/workbook/worksheets`);
+    const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
     const sheetId = wsInfo.value[0].id;
     const colEnd = String.fromCharCode(64 + CONFIG.headers.length);
     await callGraph(
-      `/me/drive/items/${state.excelFileId}/workbook/worksheets/${encodeURIComponent(sheetId)}/tables/add`,
+      `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/tables/add`,
       'POST',
       { address: `A1:${colEnd}1`, hasHeaders: true }
     );
-    const tables = await callGraph(`/me/drive/items/${state.excelFileId}/workbook/tables`);
+    const tables = await callGraph(`${driveItem(state.excelFileId)}/workbook/tables`);
     if (tables.value.length > 0) {
       await callGraph(
-        `/me/drive/items/${state.excelFileId}/workbook/tables/${tables.value[0].id}`,
+        `${driveItem(state.excelFileId)}/workbook/tables/${tables.value[0].id}`,
         'PATCH',
         { name: CONFIG.tableName }
       );
@@ -1173,7 +1235,7 @@ async function resetExcelFile() {
   try {
     // Delete existing
     try {
-      await callGraph(`/me/drive/items/${state.excelFileId}`, 'DELETE');
+      await callGraph(`${driveItem(state.excelFileId)}`, 'DELETE');
     } catch {}
     await createExcelDatabase();
     showToast('ファイルを再作成しました', 'success');
@@ -1187,7 +1249,7 @@ async function appendRowToExcel(rowData) {
   // Use table rows add API
   try {
     await callGraph(
-      `/me/drive/items/${state.excelFileId}/workbook/tables('${CONFIG.tableName}')/rows/add`,
+      `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/add`,
       'POST',
       { values: [rowData] }
     );
@@ -1200,16 +1262,15 @@ async function appendRowToExcel(rowData) {
 }
 
 async function appendRowFallback(rowData) {
-  // テーブルが見つからない場合、ワークシートの最終行に直接書き込む
-  const wsInfo = await callGraph(`/me/drive/items/${state.excelFileId}/workbook/worksheets`);
+  const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
   const sheetId = wsInfo.value[0].id;
   const used = await callGraph(
-    `/me/drive/items/${state.excelFileId}/workbook/worksheets/${encodeURIComponent(sheetId)}/usedRange`
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/usedRange`
   );
   const nextRow = (used.rowCount || 1) + 1;
   const colEnd = String.fromCharCode(64 + rowData.length);
   await callGraph(
-    `/me/drive/items/${state.excelFileId}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${nextRow}:${colEnd}${nextRow}')`,
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${nextRow}:${colEnd}${nextRow}')`,
     'PATCH',
     { values: [rowData] }
   );
@@ -1460,7 +1521,48 @@ function removeResidentField(btn) {
 
 function updateExcelStatus(msg) {
   const el = document.getElementById('excel-status');
-  if (el) el.textContent = `OneDriveパス: ${CONFIG.excelFolderName}/${CONFIG.excelFileName} (${msg})`;
+  const mode = CONFIG.storageMode === 'sharepoint' ? 'SharePoint' : 'OneDrive';
+  if (el) el.textContent = `${mode}: ${CONFIG.excelFolderName}/${CONFIG.excelFileName} (${msg})`;
+  // セッション内でアンロック済みなら管理者エリアを復元
+  if (sessionStorage.getItem('admin_unlocked') === '1') {
+    document.getElementById('admin-locked-area').style.display = 'none';
+    document.getElementById('admin-unlocked-area').style.display = 'block';
+    const urlEl = document.getElementById('sharepoint-site-url');
+    if (urlEl) urlEl.textContent = CONFIG.sharepointSiteUrl || '（未設定）';
+  }
+}
+
+// ==============================
+// ADMIN PIN UNLOCK
+// ==============================
+function showAdminUnlock() {
+  const modal = document.getElementById('admin-pin-modal');
+  modal.style.display = 'flex';
+  document.getElementById('admin-pin-input').value = '';
+  document.getElementById('admin-pin-error').style.display = 'none';
+  const urlEl = document.getElementById('sharepoint-site-url');
+  if (urlEl) urlEl.textContent = CONFIG.sharepointSiteUrl || '（未設定）';
+  setTimeout(() => document.getElementById('admin-pin-input').focus(), 100);
+}
+
+function hideAdminUnlock() {
+  document.getElementById('admin-pin-modal').style.display = 'none';
+}
+
+function checkAdminPin() {
+  const entered = document.getElementById('admin-pin-input').value;
+  if (entered === String(CONFIG.adminPin)) {
+    sessionStorage.setItem('admin_unlocked', '1');
+    hideAdminUnlock();
+    document.getElementById('admin-locked-area').style.display = 'none';
+    document.getElementById('admin-unlocked-area').style.display = 'block';
+    const urlEl = document.getElementById('sharepoint-site-url');
+    if (urlEl) urlEl.textContent = CONFIG.sharepointSiteUrl || '（未設定）';
+  } else {
+    document.getElementById('admin-pin-error').style.display = 'block';
+    document.getElementById('admin-pin-input').value = '';
+    document.getElementById('admin-pin-input').focus();
+  }
 }
 
 // ==============================
@@ -1554,10 +1656,23 @@ function createResidentBlock(resident, reportDate) {
   div.className = 'resident-block';
   div.id = `block-${key}`;
 
+  let kubunWarnHtml = '';
+  if (kubuns.length === 0) {
+    kubunWarnHtml = `<div id="kubun-warn-${key}" style="font-size:11px;color:#c62828;margin-top:3px;line-height:1.4">区分が未登録です（設定画面で登録してください）</div>`;
+  } else if (!kubun) {
+    kubunWarnHtml = `<div id="kubun-warn-${key}" style="font-size:11px;color:#c62828;margin-top:3px;line-height:1.4">報告日の区分期間が切れています（設定画面を確認してください）</div>`;
+  }
+
   div.innerHTML = `
-    <div class="resident-header" onclick="toggleResident('${key}')">
-      <span class="resident-name">${escHtml(name)}${kubun ? `<span class="kubun-badge">${escHtml(kubun)}</span>` : ''}</span>
-      <div class="resident-status">
+    <div class="resident-header" onclick="toggleResident('${key}')" style="${kubunWarnHtml ? 'align-items:flex-start' : ''}">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+          <span class="resident-name">${escHtml(name)}</span>
+          ${kubun ? `<span class="kubun-badge">${escHtml(kubun)}</span>` : ''}
+        </div>
+        ${kubunWarnHtml}
+      </div>
+      <div class="resident-status" style="flex-shrink:0">
         <span class="resident-badge badge-absent" id="badge-${key}">未入力</span>
         <svg class="resident-chevron" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
           <path d="M7 10l5 5 5-5z"/>
@@ -1884,10 +1999,17 @@ function validateForm() {
   const { homes } = getSettings();
   const homeObj = homes.find(h => h.name === state.selectedHome);
   const residents = homeObj ? homeObj.residents.filter(Boolean) : [];
+  const reportDate = document.getElementById('input-date')?.value || '';
   for (const r of residents) {
     const name = typeof r === 'string' ? r : r.name;
+    const kubuns = (typeof r === 'object' && r.kubuns) ? r.kubuns : [];
     const key = safeName(name);
     const d = state.residentData[key] || {};
+
+    // 区分チェック
+    const kubun = getKubunForDate(kubuns, reportDate);
+    if (!kubun) hasErrors = true;
+
     setErr(`error-riyou-${key}`, !d.riyou);
     if (slot === '早朝') {
       setErr(`error-shokuji-${key}`, !d.shokuji);
@@ -1899,9 +2021,9 @@ function validateForm() {
   }
 
   if (hasErrors) {
-    const first = document.querySelector('.field-error.visible');
+    const first = document.querySelector('.field-error.visible') || document.querySelector('[id^="kubun-warn-"]');
     if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    showToast('未入力の必須項目があります', 'error');
+    showToast('未入力または区分設定に不備があります', 'error');
   }
   return !hasErrors;
 }

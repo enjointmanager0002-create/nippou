@@ -636,6 +636,57 @@
 
     /* ===== HIDDEN ===== */
     .hidden { display: none !important; }
+
+    /* ===== VIEWER ===== */
+    .record-group { margin-bottom: 16px; }
+    .record-resident-card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 8px;
+    }
+    .record-field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px 16px;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    .record-field { display: flex; flex-direction: column; gap: 2px; }
+    .record-field.full { grid-column: 1 / -1; }
+    .record-field-label { font-size: 11px; color: var(--text-muted); }
+    .record-field-value { font-weight: 500; white-space: pre-wrap; word-break: break-word; }
+
+    /* ===== EDIT MODAL ===== */
+    .edit-modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55);
+      z-index: 8000;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .edit-modal-box {
+      background: white;
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 520px;
+      margin: auto;
+    }
+    .edit-section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 16px 0 8px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
   </style>
 </head>
 <body>
@@ -676,6 +727,7 @@
     <div class="app-header-title">電子日報</div>
     <div class="app-header-user">
       <span id="user-name">...</span>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
@@ -852,6 +904,57 @@
 
     <div class="btn-row" style="margin-top:8px">
       <button type="button" class="btn btn-primary" onclick="saveSettings()">保存して戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- VIEWER SCREEN -->
+<div id="screen-viewer" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">閲覧・編集</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('main')">← 戻る</button>
+    </div>
+  </div>
+  <div class="app-content">
+    <div class="card">
+      <div class="card-title">検索条件</div>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
+        <div style="display:flex;align-items:center;gap:6px;flex:2;min-width:220px">
+          <div class="form-group" style="flex:1;margin:0">
+            <label class="form-label">開始日</label>
+            <input type="date" id="viewer-from" class="form-input" style="margin:0">
+          </div>
+          <span style="padding-top:20px;color:#888">〜</span>
+          <div class="form-group" style="flex:1;margin:0">
+            <label class="form-label">終了日</label>
+            <input type="date" id="viewer-to" class="form-input" style="margin:0">
+          </div>
+        </div>
+        <div class="form-group" style="flex:1;min-width:140px;margin:0">
+          <label class="form-label">住居</label>
+          <select id="viewer-home" class="form-select" style="margin:0">
+            <option value="">全住居</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:12px" onclick="searchRecords()">検索する</button>
+    </div>
+    <div id="viewer-results"></div>
+  </div>
+</div>
+
+<!-- EDIT MODAL -->
+<div id="edit-modal" class="edit-modal-overlay" style="display:none">
+  <div class="edit-modal-box">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div style="font-size:17px;font-weight:700">記録を編集</div>
+      <button class="btn-icon" onclick="closeEditModal()" style="font-size:20px">✕</button>
+    </div>
+    <div id="edit-modal-body"></div>
+    <div class="btn-row" style="margin-top:16px">
+      <button class="btn btn-secondary" onclick="closeEditModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveEditRecord()">保存する</button>
     </div>
   </div>
 </div>
@@ -2139,7 +2242,7 @@ function clearForm() {
 // SCREEN MANAGEMENT
 // ==============================
 function showScreen(name) {
-  ['loading', 'login', 'main', 'success', 'settings'].forEach(s => {
+  ['loading', 'login', 'main', 'success', 'settings', 'viewer'].forEach(s => {
     const el = document.getElementById(`screen-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
   });
@@ -2210,6 +2313,286 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initMsal();
 });
+
+// ==============================
+// VIEWER
+// ==============================
+const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考'];
+const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
+let _viewerRows = [];
+
+function showViewer() {
+  const { homes } = getSettings();
+  const sel = document.getElementById('viewer-home');
+  sel.innerHTML = '<option value="">全住居</option>' +
+    homes.filter(h => h.name).map(h => `<option value="${escHtml(h.name)}">${escHtml(h.name)}</option>`).join('');
+  const today = new Date();
+  const week = new Date(today);
+  week.setDate(today.getDate() - 6);
+  document.getElementById('viewer-from').value = week.toISOString().slice(0, 10);
+  document.getElementById('viewer-to').value = today.toISOString().slice(0, 10);
+  document.getElementById('viewer-results').innerHTML = '';
+  showScreen('viewer');
+}
+
+async function searchRecords() {
+  const from = document.getElementById('viewer-from').value;
+  const to   = document.getElementById('viewer-to').value;
+  const homeFilter = document.getElementById('viewer-home').value;
+  if (!from || !to) { showToast('期間を入力してください', 'error'); return; }
+  if (from > to)    { showToast('開始日は終了日以前にしてください', 'error'); return; }
+
+  const container = document.getElementById('viewer-results');
+  container.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">読み込み中...</div>';
+
+  try {
+    _viewerRows = await readExcelAllRows();
+    const filtered = _viewerRows.filter(r => {
+      const d = r.values[VH['報告日']];
+      if (!d || d < from || d > to) return false;
+      if (homeFilter && r.values[VH['ホーム名']] !== homeFilter) return false;
+      return true;
+    });
+    if (!filtered.length) {
+      container.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">該当するデータがありません</div>';
+      return;
+    }
+    renderViewerResults(filtered, container);
+  } catch (e) {
+    container.innerHTML = `<div style="text-align:center;padding:32px;color:#c62828">読み込みエラー: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function readExcelAllRows() {
+  const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
+  const sheetId = wsInfo.value[0].id;
+  const range = await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/usedRange`
+  );
+  const rows = [];
+  for (let i = 1; i < range.values.length; i++) {
+    const v = range.values[i];
+    if (!v[1]) continue;
+    rows.push({ excelRow: i + 1, values: v });
+  }
+  return rows;
+}
+
+function renderViewerResults(rows, container) {
+  container.innerHTML = '';
+  const slotOrder = { '早朝': 0, '日中': 1, '夜間': 2 };
+  const groups = new Map();
+  for (const row of rows) {
+    const v = row.values;
+    const key = `${v[VH['報告日']]}||${v[VH['時間帯']]}||${v[VH['ホーム名']]}||${v[VH['担当職員名']]}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        date: v[VH['報告日']], slot: v[VH['時間帯']],
+        home: v[VH['ホーム名']], staff: v[VH['担当職員名']],
+        kinmu: v[VH['勤務体系']], staffMeal: v[VH['職員食事']],
+        residents: []
+      });
+    }
+    groups.get(key).residents.push(row);
+  }
+  const sorted = [...groups.values()].sort((a, b) => {
+    if (b.date !== a.date) return b.date.localeCompare(a.date);
+    return (slotOrder[a.slot] ?? 9) - (slotOrder[b.slot] ?? 9);
+  });
+  let lastDate = '';
+  for (const g of sorted) {
+    if (g.date !== lastDate) {
+      lastDate = g.date;
+      const dh = document.createElement('div');
+      dh.style.cssText = 'font-size:15px;font-weight:700;color:var(--primary);margin:20px 0 8px;padding-bottom:6px;border-bottom:2px solid var(--primary)';
+      dh.textContent = formatDateJP(g.date);
+      container.appendChild(dh);
+    }
+    container.appendChild(buildGroupCard(g));
+  }
+}
+
+function formatDateJP(d) {
+  if (!d) return '';
+  const dt = new Date(d + 'T00:00:00');
+  return `${d}（${'日月火水木金土'[dt.getDay()]}）`;
+}
+
+function buildGroupCard(g) {
+  const slotColor = { '早朝': '#e65100', '日中': '#2e7d32', '夜間': '#283593' };
+  const slotBg    = { '早朝': '#fff3e0', '日中': '#e8f5e9', '夜間': '#e8eaf6' };
+  const c = slotColor[g.slot] || '#555';
+  const bg = slotBg[g.slot] || '#f5f5f5';
+  const wrap = document.createElement('div');
+  wrap.className = 'record-group';
+  let html = `
+    <div style="background:${bg};border-left:4px solid ${c};border-radius:10px 10px 0 0;padding:10px 16px">
+      <span style="font-weight:700;color:${c};font-size:14px">${escHtml(g.slot)}</span>
+      <span style="font-size:13px;color:var(--text);margin-left:10px">${escHtml(g.home)}</span>
+    </div>
+    <div style="background:#f8f9fa;padding:8px 16px;font-size:13px;border-left:4px solid ${c}">
+      <span style="color:var(--text-muted)">担当：</span><strong>${escHtml(g.staff)}</strong>
+      ${g.kinmu ? `<span style="margin-left:12px;color:var(--text-muted)">${escHtml(g.kinmu)}</span>` : ''}
+      ${g.staffMeal ? `<span style="margin-left:12px"><span style="color:var(--text-muted)">職員食事：</span>${escHtml(g.staffMeal)}</span>` : ''}
+    </div>
+    <div style="border:1px solid var(--border);border-top:none;border-radius:0 0 10px 10px;padding:10px">
+  `;
+  for (const row of g.residents) html += buildResidentCard(row);
+  html += '</div>';
+  wrap.innerHTML = html;
+  return wrap;
+}
+
+function buildResidentCard(row) {
+  const v = row.values;
+  const fields = [
+    { label: '利用の有無',    value: v[VH['利用の有無']] },
+    { label: '異常の有無',    value: v[VH['異常の有無']],    danger: v[VH['異常の有無']] === 'あり' },
+    { label: '体調確認時間',  value: v[VH['体調確認時間']] },
+    { label: '体調確認方法',  value: v[VH['体調確認方法']] },
+    { label: '支援内容',      value: v[VH['支援内容']],      full: true },
+    { label: '食事内容',      value: v[VH['食事内容']] },
+    { label: '昼食準備',      value: v[VH['昼食準備']] },
+    { label: '活動内容',      value: v[VH['活動内容']] },
+    { label: '連携及び調整',  value: v[VH['連携及び調整']], full: true },
+    { label: '外泊',          value: v[VH['外泊']] },
+    { label: '夜間支援',      value: v[VH['夜間支援']],      full: true },
+    { label: '巡回時間',      value: v[VH['巡回時間']] },
+    { label: '備考',          value: v[VH['備考']],          full: true },
+  ].filter(f => f.value !== '' && f.value !== null && f.value !== undefined);
+
+  const fieldsHtml = fields.map(f =>
+    `<div class="record-field${f.full ? ' full' : ''}">
+      <span class="record-field-label">${escHtml(f.label)}</span>
+      <span class="record-field-value${f.danger ? '" style="color:#c62828' : ''}">${escHtml(String(f.value))}</span>
+    </div>`
+  ).join('');
+
+  return `
+    <div class="record-resident-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-weight:700;font-size:14px">${escHtml(String(v[VH['利用者名']] || ''))}</div>
+        <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px"
+                onclick="openEditModal(${row.excelRow})">編集</button>
+      </div>
+      ${fieldsHtml ? `<div class="record-field-grid">${fieldsHtml}</div>` : '<div style="font-size:13px;color:var(--text-muted);margin-top:4px">記録なし</div>'}
+    </div>`;
+}
+
+// ==============================
+// EDIT MODAL
+// ==============================
+function openEditModal(excelRow) {
+  const found = _viewerRows.find(r => r.excelRow === excelRow);
+  if (!found) { showToast('編集データが見つかりません', 'error'); return; }
+  const v = found.values;
+
+  const sections = [
+    { title: '基本情報', fields: [
+      { key: '報告日',    type: 'date'   },
+      { key: 'ホーム名',  type: 'text'   },
+      { key: '利用者名',  type: 'text'   },
+      { key: '時間帯',    type: 'select', opts: ['早朝','日中','夜間'] },
+    ]},
+    { title: '職員情報', fields: [
+      { key: '担当職員名', type: 'text'   },
+      { key: '勤務体系',   type: 'text'   },
+      { key: '職員食事',   type: 'select', opts: ['有','無',''] },
+    ]},
+    { title: '利用者状態', fields: [
+      { key: '利用の有無',   type: 'select', opts: ['有','無',''] },
+      { key: '異常の有無',   type: 'select', opts: ['有','無',''] },
+      { key: '体調確認時間', type: 'text'   },
+      { key: '体調確認方法', type: 'select', opts: ['様子から確認','会話で確認',''] },
+    ]},
+    { title: '支援・食事', fields: [
+      { key: '支援内容',    type: 'textarea' },
+      { key: '食事内容',    type: 'text'     },
+      { key: '昼食準備',    type: 'text'     },
+      { key: '活動内容',    type: 'text'     },
+      { key: '連携及び調整', type: 'textarea' },
+    ]},
+    { title: '夜間情報', fields: [
+      { key: '外泊',    type: 'select',   opts: ['有','無',''] },
+      { key: '夜間支援', type: 'textarea' },
+      { key: '巡回時間', type: 'text'     },
+    ]},
+    { title: 'その他', fields: [
+      { key: '備考', type: 'textarea' },
+    ]},
+  ];
+
+  let html = '';
+  for (const sec of sections) {
+    html += `<div class="edit-section-title">${escHtml(sec.title)}</div>`;
+    for (const f of sec.fields) {
+      const val = String(v[VH[f.key]] ?? '');
+      const id  = `ef-${f.key}`;
+      let inp = '';
+      if (f.type === 'select') {
+        inp = `<select id="${id}" class="form-select" style="margin:0">
+          ${(f.opts || []).map(o => `<option value="${escHtml(o)}"${o === val ? ' selected' : ''}>${o || '---'}</option>`).join('')}
+        </select>`;
+      } else if (f.type === 'textarea') {
+        inp = `<textarea id="${id}" class="form-input" rows="2" style="margin:0;resize:vertical">${escHtml(val)}</textarea>`;
+      } else {
+        inp = `<input type="${f.type}" id="${id}" class="form-input" value="${escHtml(val)}" style="margin:0">`;
+      }
+      html += `<div class="form-group" style="margin-bottom:10px">
+        <label class="form-label">${escHtml(f.key)}</label>${inp}
+      </div>`;
+    }
+  }
+
+  document.getElementById('edit-modal-body').innerHTML = html;
+  const modal = document.getElementById('edit-modal');
+  modal.dataset.excelRow = excelRow;
+  modal.style.display = 'flex';
+}
+
+function closeEditModal() {
+  document.getElementById('edit-modal').style.display = 'none';
+}
+
+async function saveEditRecord() {
+  const modal = document.getElementById('edit-modal');
+  const excelRow = parseInt(modal.dataset.excelRow);
+  const found = _viewerRows.find(r => r.excelRow === excelRow);
+  const original = found ? found.values : [];
+
+  const editableKeys = ['報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事',
+    '利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備',
+    '活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考'];
+
+  const rowData = VIEWER_HEADERS.map((h, i) => {
+    if (h === '送信日時') return original[i] || '';
+    const el = document.getElementById(`ef-${h}`);
+    return el ? el.value : (original[i] || '');
+  });
+
+  closeEditModal();
+  setLoading('保存中...');
+  try {
+    await updateExcelRow(excelRow, rowData);
+    showToast('保存しました', 'success');
+    showScreen('viewer');
+    await searchRecords();
+  } catch (e) {
+    showToast('保存エラー: ' + e.message, 'error');
+    showScreen('viewer');
+  }
+}
+
+async function updateExcelRow(excelRowNum, rowData) {
+  const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
+  const sheetId = wsInfo.value[0].id;
+  const colEnd = String.fromCharCode(64 + rowData.length);
+  await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${excelRowNum}:${colEnd}${excelRowNum}')`,
+    'PATCH',
+    { values: [rowData] }
+  );
+}
 
 </script>
 </body>

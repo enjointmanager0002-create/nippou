@@ -2346,6 +2346,19 @@ document.addEventListener('DOMContentLoaded', () => {
 // SEED DATA
 // ==============================
 function showSeedPanel() {
+  // 設定から住居・利用者・職員を自動入力
+  const { homes, staffNames } = getSettings();
+  if (homes.length > 0 && homes[0].name) {
+    document.getElementById('seed-home').value = homes[0].name;
+  }
+  if (homes.length > 0 && homes[0].residents.length > 0) {
+    document.getElementById('seed-residents').value =
+      homes[0].residents.map(r => (typeof r === 'string' ? r : r.name)).filter(Boolean).join('\n');
+  }
+  if (staffNames.length > 0) {
+    document.getElementById('seed-staff').value =
+      staffNames.map(s => (typeof s === 'string' ? s : s.name)).filter(Boolean).join('\n');
+  }
   document.getElementById('seed-panel').style.display = 'block';
 }
 
@@ -2455,6 +2468,16 @@ const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名'
 const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
 let _viewerRows = [];
 
+// Excelがシリアル数値で返した日付を YYYY-MM-DD 文字列に変換
+function _toDateStr(v) {
+  if (typeof v === 'number') {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return d.toISOString().slice(0, 10);
+  }
+  // 文字列の場合: "2026/03/01" → "2026-03-01" に統一
+  return String(v || '').replace(/\//g, '-').slice(0, 10);
+}
+
 function showViewer() {
   const { homes } = getSettings();
   const sel = document.getElementById('viewer-home');
@@ -2482,7 +2505,7 @@ async function searchRecords() {
   try {
     _viewerRows = await readExcelAllRows();
     const filtered = _viewerRows.filter(r => {
-      const d = r.values[VH['報告日']];
+      const d = _toDateStr(r.values[VH['報告日']]);
       if (!d || d < from || d > to) return false;
       if (homeFilter && r.values[VH['ホーム名']] !== homeFilter) return false;
       return true;
@@ -2518,10 +2541,11 @@ function renderViewerResults(rows, container) {
   const groups = new Map();
   for (const row of rows) {
     const v = row.values;
-    const key = `${v[VH['報告日']]}||${v[VH['時間帯']]}||${v[VH['ホーム名']]}||${v[VH['担当職員名']]}`;
+    const dateStr = _toDateStr(v[VH['報告日']]);
+    const key = `${dateStr}||${v[VH['時間帯']]}||${v[VH['ホーム名']]}||${v[VH['担当職員名']]}`;
     if (!groups.has(key)) {
       groups.set(key, {
-        date: v[VH['報告日']], slot: v[VH['時間帯']],
+        date: dateStr, slot: v[VH['時間帯']],
         home: v[VH['ホーム名']], staff: v[VH['担当職員名']],
         kinmu: v[VH['勤務体系']], staffMeal: v[VH['職員食事']],
         residents: []

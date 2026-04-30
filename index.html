@@ -885,6 +885,34 @@
           保存先：SharePoint (<code id="sharepoint-site-url" style="font-size:11px;word-break:break-all"></code>)
         </div>
         <button class="btn btn-secondary" onclick="resetExcelFile()">データファイルを再作成</button>
+        <button class="btn btn-secondary" style="margin-top:8px;font-size:13px" onclick="showSeedPanel()">テストデータを挿入（3月分）</button>
+        <div id="seed-panel" style="display:none;margin-top:12px;padding:12px;background:#f4f6f9;border-radius:10px;border:1px solid var(--border)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:8px">テストデータ設定</div>
+          <div class="form-group" style="margin-bottom:8px">
+            <label class="form-label" style="font-size:12px">住居名</label>
+            <input type="text" id="seed-home" class="form-input" value="下豊岡" style="margin:0">
+          </div>
+          <div class="form-group" style="margin-bottom:8px">
+            <label class="form-label" style="font-size:12px">利用者名（1行1名）</label>
+            <textarea id="seed-residents" class="form-input" rows="5" style="margin:0;resize:vertical">山田 太郎
+鈴木 花子
+佐藤 次郎
+高橋 美子
+田中 健一</textarea>
+          </div>
+          <div class="form-group" style="margin-bottom:10px">
+            <label class="form-label" style="font-size:12px">職員名（1行1名）</label>
+            <textarea id="seed-staff" class="form-input" rows="4" style="margin:0;resize:vertical">中村 みどり
+小林 健太
+伊藤 さくら
+渡辺 拓也</textarea>
+          </div>
+          <div id="seed-progress" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:8px"></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary" style="font-size:13px" onclick="runSeedInsert()">挿入開始</button>
+            <button class="btn btn-secondary" style="font-size:13px" onclick="document.getElementById('seed-panel').style.display='none'">キャンセル</button>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -2313,6 +2341,102 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initMsal();
 });
+
+// ==============================
+// SEED DATA
+// ==============================
+function showSeedPanel() {
+  document.getElementById('seed-panel').style.display = 'block';
+}
+
+function _seedPick(arr, seed) {
+  return arr[Math.abs(seed) % arr.length];
+}
+
+function _generateSeedRows(homeName, residents, staffList) {
+  const KINMU_N = ['夕朝勤(17:00-翌9:00)','夕朝勤(18:00-翌9:00)','夕勤(17:00-21:00)','夕勤(18:00-21:00)'];
+  const KINMU_Y = ['S夜勤(21:00-翌9:00)','S夜勤(22:00-翌9:00)'];
+  const SHIEN_M = {
+    0:'服薬支援、食事提供、片付け', 1:'服薬支援、洗濯、相談支援',
+    2:'服薬支援、入浴援助、排泄援助、食事提供', 3:'服薬支援、食事提供、買い物',
+    4:'服薬支援、掃除、整容',
+  };
+  const KTWD = ['仕事・アルバイト','作業所・地活','作業所・地活','デイケア','仕事・アルバイト'];
+  const KTWK = ['休日','GHで過ごす','GHで過ごす','病院','休日'];
+  const TACHO = { '早朝':['06:30','07:00','07:30','08:00','08:30'], '日中':['10:00','12:30','14:00','16:00','18:00'], '夜間':['22:30','23:00','23:30','00:00'] };
+  const YSHIEN = ['全員就寝確認。特変なし。','入眠確認後、巡回実施。異常なし。','夜間中の特変なし。全員安定。','巡回時、全員就寝中。異常なし。'];
+  const JUNKAI = ['23:00 / 01:00 / 03:00 / 05:00','22:30 / 00:30 / 02:30 / 04:30','23:30 / 01:30 / 03:30 / 05:30','00:00 / 02:00 / 04:00'];
+  const RENKEI = ['特になし。','次番担当者に口頭で引継ぎ済み。','相談支援員に月次状況を報告。','特になし。','モニタリング内容について担当者間で共有済み。'];
+  const BIKO   = ['','','','特変なし。','','本人より体調について相談あり。引継ぎ済み。','','','外出後帰宅。特に問題なし。',''];
+  const rows = [];
+  for (let day = 1; day <= 31; day++) {
+    const date   = `2026-03-${String(day).padStart(2, '0')}`;
+    const isWknd = [0, 6].includes(new Date(2026, 2, day).getDay());
+    for (let si = 0; si < 3; si++) {
+      const slot  = ['早朝','日中','夜間'][si];
+      const staff = _seedPick(staffList, day * 3 + si);
+      for (let ri = 0; ri < residents.length; ri++) {
+        const name = residents[ri];
+        const seed = day * 31 + ri * 7 + si * 13;
+        const riyou     = (day % 13 === ri % 13 && day > 10) ? '無' : '有';
+        const ijo       = (day === 12 && ri === 2) || (day === 25 && ri === 3) ? 'あり' : 'なし';
+        const staffMeal = slot === '夜間' ? '' : (seed % 4 === 0 ? '無' : '有');
+        const kinmu     = slot === '日中' ? _seedPick(KINMU_N, seed) : slot === '夜間' ? _seedPick(KINMU_Y, seed) : '';
+        const shokuji   = riyou === '有' ? (slot === '早朝' ? _seedPick(['ご飯一式提供','ご飯一式提供','おかずのみ提供'], seed) : slot === '日中' ? _seedPick(['ご飯・汁物提供','ご飯・汁物提供','おかずのみ提供'], seed) : '') : '';
+        const chushoku  = riyou === '有' && slot === '早朝' ? _seedPick(['ご飯一式提供','ご飯一式提供','おかずのみ提供'], seed + 1) : '';
+        const katsudo   = riyou === '有' && slot === '日中' ? (isWknd ? _seedPick(KTWK, ri) : _seedPick(KTWD, ri)) : '';
+        const renkei    = riyou === '有' && slot === '日中' ? _seedPick(RENKEI, seed) : '';
+        const gaihaku   = slot === '夜間' ? (day % 11 === ri ? '有' : '無') : '';
+        const yakanS    = riyou === '有' && slot === '夜間' ? _seedPick(YSHIEN, seed) : '';
+        const junkai    = riyou === '有' && slot === '夜間' ? _seedPick(JUNKAI, day) : '';
+        let biko = _seedPick(BIKO, seed);
+        if (ijo === 'あり') biko = day === 12 ? '昼食後に腹痛を訴えたため担当者に報告。その後様子改善を確認。' : '夜間に不眠あり。翌日担当者に引継ぎ済み。';
+        rows.push([
+          '2026/03/01 10:00:00', date, homeName, name, slot, staff, kinmu, staffMeal,
+          riyou, ijo,
+          riyou === '有' ? _seedPick(TACHO[slot], seed) : '',
+          riyou === '有' ? (seed % 3 === 0 ? '会話で確認' : '様子から確認') : '',
+          riyou === '有' ? (SHIEN_M[ri] || SHIEN_M[0]) : '',
+          shokuji, chushoku, katsudo, renkei, gaihaku, yakanS, junkai, biko,
+        ]);
+      }
+    }
+  }
+  return rows;
+}
+
+async function runSeedInsert() {
+  const homeName  = document.getElementById('seed-home').value.trim();
+  const residents = document.getElementById('seed-residents').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+  const staffList = document.getElementById('seed-staff').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+  if (!homeName || !residents.length || !staffList.length) {
+    showToast('住居名・利用者名・職員名をすべて入力してください', 'error'); return;
+  }
+  const prog = document.getElementById('seed-progress');
+  prog.style.display = 'block';
+  prog.textContent   = 'データ生成中...';
+  const rows  = _generateSeedRows(homeName, residents, staffList);
+  const total = rows.length;
+  const BATCH = 50;
+  let done = 0;
+  try {
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const chunk = rows.slice(i, i + BATCH);
+      await callGraph(
+        `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/add`,
+        'POST',
+        { values: chunk }
+      );
+      done += chunk.length;
+      prog.textContent = `挿入中... ${done} / ${total} 件`;
+    }
+    prog.textContent = `✓ 完了！${total}件のテストデータを挿入しました。`;
+    showToast(`${total}件のテストデータを挿入しました`, 'success');
+  } catch (e) {
+    prog.textContent = 'エラー: ' + e.message;
+    showToast('挿入エラー: ' + e.message, 'error');
+  }
+}
 
 // ==============================
 // VIEWER

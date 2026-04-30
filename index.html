@@ -2817,7 +2817,6 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
         <td style="white-space:pre-wrap">${_esc(shokujiCell)}</td>
         <td style="white-space:pre-wrap">${_esc(katsudoCell)}</td>
         <td style="white-space:pre-wrap">${_esc(biko)}</td>
-        <td class="td-confirm"></td>
       </tr>`;
     });
   }
@@ -2826,15 +2825,14 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
   const colWidths = [
     ['日付',     '6%'],
     ['時間帯',   '5%'],
-    ['担当職員', '9%'],
-    ['利用',     '4%'],
-    ['異常',     '4%'],
+    ['担当職員', '8%'],
+    ['利用',     '3%'],
+    ['異常',     '3%'],
     ['体調確認', '10%'],
-    ['支援内容', '16%'],
-    ['食事',     '13%'],
+    ['支援内容', '13%'],
+    ['食事',     '12%'],
     ['活動',     '12%'],
-    ['備考',     '15%'],
-    ['ご確認',   '6%'],
+    ['備考',     '28%'],
   ];
   const colgroupHtml = colWidths.map(([,w]) => `<col style="width:${w}">`).join('');
   const theadHtml = colWidths.map(([l]) => `<th>${_esc(l)}</th>`).join('');

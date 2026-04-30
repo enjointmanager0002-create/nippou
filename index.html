@@ -1877,6 +1877,29 @@ function toggleEditShienChip(el, value) {
   inp.value = [...parts].join('、');
 }
 
+function setEditToggle(fieldKey, el, value) {
+  const inp = document.getElementById('ef-' + fieldKey);
+  if (inp) inp.value = value;
+  el.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function setEditFoodToggle(fieldKey, el, kind) {
+  el.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  const inp = document.getElementById('ef-' + fieldKey);
+  if (!inp) return;
+  const text = inp.value.split('\n').slice(1).join('\n');
+  inp.value = kind + (text ? '\n' + text : '');
+}
+
+function setEditFoodText(fieldKey, text) {
+  const inp = document.getElementById('ef-' + fieldKey);
+  if (!inp) return;
+  const kind = inp.value.split('\n')[0];
+  inp.value = kind + (text ? '\n' + text : '');
+}
+
 function setFood(key, field, value, el) {
   setResidentField(key, field, value);
   el.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
@@ -2873,74 +2896,107 @@ function openEditModal(excelRow) {
   const found = _viewerRows.find(r => r.excelRow === excelRow);
   if (!found) { showToast('編集データが見つかりません', 'error'); return; }
   const v = found.values;
-
   const slot = String(v[VH['時間帯']]||'');
 
-  // slots配列で表示する時間帯を制限。省略時はすべての時間帯で表示
-  const sections = [
-    { title: '基本情報', fields: [
-      { key: '報告日',    type: 'date'   },
-      { key: 'ホーム名',  type: 'text'   },
-      { key: '利用者名',  type: 'text'   },
-      { key: '時間帯',    type: 'select', opts: ['早朝','日中','夜間'] },
-    ]},
-    { title: '職員情報', fields: [
-      { key: '担当職員名', type: 'text'   },
-      { key: '勤務体系',   type: 'text',   slots: ['日中','夜間'] },
-      { key: '職員食事',   type: 'select', opts: ['有','無',''] },
-    ]},
-    { title: '利用者状態', fields: [
-      { key: '利用の有無',   type: 'select', opts: ['有','無',''] },
-      { key: '異常の有無',   type: 'select', opts: ['有','無',''], slots: ['早朝','夜間'] },
-      { key: '体調確認時間', type: 'text',                         slots: ['早朝','日中'] },
-      { key: '体調確認方法', type: 'select', opts: ['様子から確認','会話で確認',''], slots: ['早朝'] },
-    ]},
-    { title: '支援・食事', fields: [
-      { key: '支援内容',    type: 'chips',    slots: ['早朝','日中'] },
-      { key: '食事内容',    type: 'text',     slots: ['早朝','日中'] },
-      { key: '昼食準備',    type: 'text',     slots: ['早朝'] },
-      { key: '活動内容',    type: 'text',     slots: ['日中'] },
-      { key: '連携及び調整', type: 'textarea', slots: ['日中'] },
-    ]},
-    { title: '夜間情報', fields: [
-      { key: '外泊',    type: 'select',   opts: ['有','無',''], slots: ['夜間'] },
-      { key: '夜間支援', type: 'textarea',                      slots: ['夜間'] },
-      { key: '巡回時間', type: 'text',                          slots: ['夜間'] },
-    ]},
-    { title: 'その他', fields: [
-      { key: '備考', type: 'textarea' },
-    ]},
-  ];
+  // --- ローカルヘルパー ---
+  const _str = key => String(v[VH[key]] ?? '');
 
-  let html = '';
-  for (const sec of sections) {
-    const visibleFields = sec.fields.filter(f => !f.slots || f.slots.includes(slot));
-    if (!visibleFields.length) continue;
-    html += `<div class="edit-section-title">${escHtml(sec.title)}</div>`;
-    for (const f of visibleFields) {
-      const val = String(v[VH[f.key]] ?? '');
-      const id  = `ef-${f.key}`;
-      let inp = '';
-      if (f.type === 'select') {
-        inp = `<select id="${id}" class="form-select" style="margin:0">
-          ${(f.opts || []).map(o => `<option value="${escHtml(o)}"${o === val ? ' selected' : ''}>${o || '---'}</option>`).join('')}
-        </select>`;
-      } else if (f.type === 'textarea') {
-        inp = `<textarea id="${id}" class="form-input" rows="2" style="margin:0;resize:vertical">${escHtml(val)}</textarea>`;
-      } else if (f.type === 'chips') {
-        const selected = new Set(val.split('、').filter(Boolean));
-        const chips = SHIEN_OPTIONS.map(o =>
-          `<button type="button" class="chip-btn${selected.has(o) ? ' chip-active' : ''}" onclick="toggleEditShienChip(this,'${escHtml(o)}')">${escHtml(o)}</button>`
-        ).join('');
-        inp = `<input type="hidden" id="${id}" value="${escHtml(val)}"><div class="chip-group" style="margin-top:4px">${chips}</div>`;
-      } else {
-        inp = `<input type="${f.type}" id="${id}" class="form-input" value="${escHtml(val)}" style="margin:0">`;
-      }
-      html += `<div class="form-group" style="margin-bottom:10px">
-        <label class="form-label">${escHtml(f.key)}</label>${inp}
-      </div>`;
-    }
+  function fg(label, content) {
+    return `<div class="form-group" style="margin-bottom:12px"><label class="form-label">${label}</label>${content}</div>`;
   }
+  function einput(key, type) {
+    let val = v[VH[key]];
+    if (type === 'date') val = _toDateStr(val);
+    else if (type === 'time') val = _toTimeStr(val);
+    else val = String(val || '');
+    return `<input type="${type}" id="ef-${key}" class="form-input" value="${escHtml(val)}" style="margin:0">`;
+  }
+  function eselect(key, opts) {
+    const cur = _str(key);
+    return `<select id="ef-${key}" class="form-select" style="margin:0">${opts.map(o => `<option value="${escHtml(o)}"${o===cur?' selected':''}>${o||'---'}</option>`).join('')}</select>`;
+  }
+  function etextarea(key, rows, placeholder) {
+    return `<textarea id="ef-${key}" class="form-input" rows="${rows||2}" style="margin:0;resize:vertical"${placeholder?` placeholder="${escHtml(placeholder)}"`:''} >${escHtml(_str(key))}</textarea>`;
+  }
+  function etoggle(key, opts, labelMap) {
+    const cur = _str(key);
+    const btns = opts.map(o => {
+      const lbl = (labelMap && labelMap[o]) || o;
+      return `<button type="button" class="toggle-btn${cur===o?' active':''}" onclick="setEditToggle('${key}',this,'${o}')">${lbl}</button>`;
+    }).join('');
+    return `<input type="hidden" id="ef-${key}" value="${escHtml(cur)}"><div class="toggle-group">${btns}</div>`;
+  }
+  function efood(key, opts, textLabel, textPlaceholder) {
+    const raw = _str(key);
+    const parts = raw.split('\n');
+    const kind = parts[0] || '';
+    const text = parts.slice(1).join('\n');
+    const btns = opts.map(o =>
+      `<button type="button" class="toggle-btn${kind===o?' active':''}" onclick="setEditFoodToggle('${key}',this,'${o}')">${o}</button>`
+    ).join('');
+    return `<input type="hidden" id="ef-${key}" value="${escHtml(raw)}">
+      <div class="toggle-group">${btns}</div>
+      <div style="margin-top:8px">
+        <label class="form-label" style="font-size:11px;color:var(--text-muted)">${textLabel}</label>
+        <textarea class="form-input" rows="2" style="margin:0;resize:vertical" placeholder="${escHtml(textPlaceholder||'')}"
+          oninput="setEditFoodText('${key}',this.value)">${escHtml(text)}</textarea>
+      </div>`;
+  }
+  function echips(key) {
+    const val = _str(key);
+    const selected = new Set(val.split('、').filter(Boolean));
+    const chips = SHIEN_OPTIONS.map(o =>
+      `<button type="button" class="chip-btn${selected.has(o)?' chip-active':''}" onclick="toggleEditShienChip(this,'${o}')">${o}</button>`
+    ).join('');
+    return `<input type="hidden" id="ef-${key}" value="${escHtml(val)}"><div class="chip-group" style="margin-top:4px">${chips}</div>`;
+  }
+
+  // --- HTML構築（入力画面と同じ構成） ---
+  let html = '';
+
+  html += `<div class="edit-section-title">基本情報</div>`;
+  html += fg('報告日', einput('報告日','date'));
+  html += fg('ホーム名', einput('ホーム名','text'));
+  html += fg('利用者名', einput('利用者名','text'));
+  html += fg('時間帯', eselect('時間帯', ['早朝','日中','夜間']));
+
+  html += `<div class="edit-section-title">職員情報</div>`;
+  html += fg('担当職員名', einput('担当職員名','text'));
+  if (slot === '日中') html += fg('勤務体系', eselect('勤務体系', ['', ...KINMU_NICCHU]));
+  if (slot === '夜間') html += fg('勤務体系', eselect('勤務体系', ['', ...KINMU_YAKAN]));
+  html += fg('職員食事', etoggle('職員食事', ['有','無']));
+
+  html += `<div class="edit-section-title">利用者記録</div>`;
+  html += fg('利用の有無', etoggle('利用の有無', ['有','無'], {'有':'有（利用あり）','無':'無（外泊等）'}));
+
+  if (slot === '早朝') {
+    html += `<div class="edit-section-title">体調・異常確認</div>`;
+    html += fg('異常の有無', etoggle('異常の有無', ['無','有']));
+    html += fg('体調確認時間', einput('体調確認時間','time'));
+    html += fg('体調確認方法', eselect('体調確認方法', ['','様子から確認','会話で確認']));
+    html += `<div class="edit-section-title">支援・食事</div>`;
+    html += fg('支援内容', echips('支援内容'));
+    html += fg('朝食準備 / 朝食内容', efood('食事内容', FOOD_OPTIONS, '朝食内容', '用意した朝食の内容を記入'));
+    html += fg('昼食準備 / 昼食内容', efood('昼食準備', FOOD_OPTIONS, '昼食内容', '用意した昼食の内容を記入'));
+  } else if (slot === '日中') {
+    html += `<div class="edit-section-title">活動内容</div>`;
+    html += fg('活動内容', eselect('活動内容', ['', ...KATSUDO_OPTIONS]));
+    html += `<div class="edit-section-title">体調確認</div>`;
+    html += fg('体調確認時間', einput('体調確認時間','time'));
+    html += `<div class="edit-section-title">支援・食事</div>`;
+    html += fg('支援内容', echips('支援内容'));
+    html += fg('夕食準備 / 夕食内容', efood('食事内容', YUSHOKU_OPTIONS, '夕食内容', '用意した夕食の内容を記入'));
+    html += fg('連携及び調整', etextarea('連携及び調整', 2, '関係機関等との連携内容'));
+  } else if (slot === '夜間') {
+    html += fg('外泊', etoggle('外泊', ['有','無']));
+    html += fg('夜間支援', eselect('夜間支援', ['','夜勤','当直']));
+    html += `<div class="edit-section-title">異常確認・状況</div>`;
+    html += fg('異常の有無', etoggle('異常の有無', ['無','有']));
+    html += fg('巡回時間', einput('巡回時間','text'));
+  }
+
+  html += `<div class="edit-section-title">その他</div>`;
+  html += fg('備考（相談内容・支援内容等）', etextarea('備考', 3, '身体拘束・苦情・事故等も記載'));
 
   document.getElementById('edit-modal-body').innerHTML = html;
   const modal = document.getElementById('edit-modal');

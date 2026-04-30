@@ -1867,6 +1867,16 @@ function toggleShienChip(key, value, el) {
   updateSubmitState();
 }
 
+function toggleEditShienChip(el, value) {
+  el.classList.toggle('chip-active');
+  const inp = document.getElementById('ef-支援内容');
+  if (!inp) return;
+  const parts = new Set(inp.value.split('、').filter(Boolean));
+  if (el.classList.contains('chip-active')) parts.add(value);
+  else parts.delete(value);
+  inp.value = [...parts].join('、');
+}
+
 function setFood(key, field, value, el) {
   setResidentField(key, field, value);
   el.closest('.toggle-group').querySelectorAll('.toggle-btn').forEach(b => b.classList.remove('active'));
@@ -2886,7 +2896,7 @@ function openEditModal(excelRow) {
       { key: '体調確認方法', type: 'select', opts: ['様子から確認','会話で確認',''], slots: ['早朝'] },
     ]},
     { title: '支援・食事', fields: [
-      { key: '支援内容',    type: 'textarea', slots: ['早朝','日中'] },
+      { key: '支援内容',    type: 'chips',    slots: ['早朝','日中'] },
       { key: '食事内容',    type: 'text',     slots: ['早朝','日中'] },
       { key: '昼食準備',    type: 'text',     slots: ['早朝'] },
       { key: '活動内容',    type: 'text',     slots: ['日中'] },
@@ -2917,6 +2927,12 @@ function openEditModal(excelRow) {
         </select>`;
       } else if (f.type === 'textarea') {
         inp = `<textarea id="${id}" class="form-input" rows="2" style="margin:0;resize:vertical">${escHtml(val)}</textarea>`;
+      } else if (f.type === 'chips') {
+        const selected = new Set(val.split('、').filter(Boolean));
+        const chips = SHIEN_OPTIONS.map(o =>
+          `<button type="button" class="chip-btn${selected.has(o) ? ' chip-active' : ''}" onclick="toggleEditShienChip(this,'${escHtml(o)}')">${escHtml(o)}</button>`
+        ).join('');
+        inp = `<input type="hidden" id="${id}" value="${escHtml(val)}"><div class="chip-group" style="margin-top:4px">${chips}</div>`;
       } else {
         inp = `<input type="${f.type}" id="${id}" class="form-input" value="${escHtml(val)}" style="margin:0">`;
       }

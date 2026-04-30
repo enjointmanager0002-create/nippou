@@ -961,12 +961,21 @@
         </div>
         <div class="form-group" style="flex:1;min-width:140px;margin:0">
           <label class="form-label">住居</label>
-          <select id="viewer-home" class="form-select" style="margin:0">
+          <select id="viewer-home" class="form-select" style="margin:0" onchange="updateViewerResidentFilter()">
             <option value="">全住居</option>
           </select>
         </div>
+        <div class="form-group" style="flex:1;min-width:140px;margin:0">
+          <label class="form-label">利用者</label>
+          <select id="viewer-resident" class="form-select" style="margin:0">
+            <option value="">全利用者</option>
+          </select>
+        </div>
       </div>
-      <button class="btn btn-primary" style="margin-top:12px" onclick="searchRecords()">検索する</button>
+      <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="searchRecords()">検索する</button>
+        <button class="btn btn-secondary" id="btn-print" style="flex:1;min-width:120px;display:none" onclick="printResults()">印刷する</button>
+      </div>
     </div>
     <div id="viewer-results"></div>
   </div>
@@ -2483,22 +2492,40 @@ function showViewer() {
   const sel = document.getElementById('viewer-home');
   sel.innerHTML = '<option value="">全住居</option>' +
     homes.filter(h => h.name).map(h => `<option value="${escHtml(h.name)}">${escHtml(h.name)}</option>`).join('');
+  updateViewerResidentFilter();
   const today = new Date();
   const week = new Date(today);
   week.setDate(today.getDate() - 6);
   document.getElementById('viewer-from').value = week.toISOString().slice(0, 10);
   document.getElementById('viewer-to').value = today.toISOString().slice(0, 10);
   document.getElementById('viewer-results').innerHTML = '';
+  document.getElementById('btn-print').style.display = 'none';
   showScreen('viewer');
 }
 
-async function searchRecords() {
-  const from = document.getElementById('viewer-from').value;
-  const to   = document.getElementById('viewer-to').value;
+function updateViewerResidentFilter() {
   const homeFilter = document.getElementById('viewer-home').value;
+  const { homes } = getSettings();
+  const home = homes.find(h => h.name === homeFilter);
+  const residents = home
+    ? (home.residents || []).map(r => typeof r === 'string' ? r : r.name).filter(Boolean)
+    : homes.flatMap(h => (h.residents || []).map(r => typeof r === 'string' ? r : r.name)).filter(Boolean);
+  const sel = document.getElementById('viewer-resident');
+  sel.innerHTML = '<option value="">全利用者</option>' +
+    [...new Set(residents)].map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
+}
+
+let _printRows = [];
+
+async function searchRecords() {
+  const from           = document.getElementById('viewer-from').value;
+  const to             = document.getElementById('viewer-to').value;
+  const homeFilter     = document.getElementById('viewer-home').value;
+  const residentFilter = document.getElementById('viewer-resident').value;
   if (!from || !to) { showToast('期間を入力してください', 'error'); return; }
   if (from > to)    { showToast('開始日は終了日以前にしてください', 'error'); return; }
 
+  document.getElementById('btn-print').style.display = 'none';
   const container = document.getElementById('viewer-results');
   container.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">読み込み中...</div>';
 
@@ -2507,13 +2534,16 @@ async function searchRecords() {
     const filtered = _viewerRows.filter(r => {
       const d = _toDateStr(r.values[VH['報告日']]);
       if (!d || d < from || d > to) return false;
-      if (homeFilter && r.values[VH['ホーム名']] !== homeFilter) return false;
+      if (homeFilter     && r.values[VH['ホーム名']]  !== homeFilter)     return false;
+      if (residentFilter && r.values[VH['利用者名']]  !== residentFilter) return false;
       return true;
     });
     if (!filtered.length) {
       container.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">該当するデータがありません</div>';
       return;
     }
+    _printRows = filtered;
+    document.getElementById('btn-print').style.display = 'block';
     renderViewerResults(filtered, container);
   } catch (e) {
     container.innerHTML = `<div style="text-align:center;padding:32px;color:#c62828">読み込みエラー: ${escHtml(e.message)}</div>`;
@@ -2635,6 +2665,167 @@ function buildResidentCard(row) {
       </div>
       ${fieldsHtml ? `<div class="record-field-grid">${fieldsHtml}</div>` : '<div style="font-size:13px;color:var(--text-muted);margin-top:4px">記録なし</div>'}
     </div>`;
+}
+
+// ==============================
+// PRINT
+// ==============================
+function printResults() {
+  if (!_printRows.length) return;
+  const from = document.getElementById('viewer-from').value;
+  const to   = document.getElementById('viewer-to').value;
+  const win  = window.open('', '_blank');
+  win.document.write(buildPrintHtml(_printRows, from, to));
+  win.document.close();
+  setTimeout(() => { win.focus(); win.print(); }, 600);
+}
+
+function _esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function buildPrintHtml(rows, from, to) {
+  // 利用者ごとにグループ化
+  const byResident = new Map();
+  for (const row of rows) {
+    const name = String(row.values[VH['利用者名']] || '');
+    if (!byResident.has(name)) byResident.set(name, []);
+    byResident.get(name).push(row);
+  }
+
+  const sections = [...byResident.entries()]
+    .map(([name, rrows], idx) => buildResidentPrintSection(name, rrows, from, to, idx > 0))
+    .join('');
+
+  const fromD = from.replace(/-/g, '/');
+  const toD   = to.replace(/-/g, '/');
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>日報記録 ${fromD}〜${toD}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Yu Gothic','Meiryo','Hiragino Kaku Gothic ProN',sans-serif;font-size:8.5pt;color:#111;background:#fff}
+  .resident-section{padding:12px 14px}
+  .page-break{page-break-before:always}
+  .report-header{margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #1a3a5c}
+  .report-header h2{font-size:13pt;font-weight:700;color:#1a3a5c}
+  .report-header .meta{font-size:8.5pt;color:#555;margin-top:2px}
+  .report-header .home{font-size:8pt;color:#888}
+  table{width:100%;border-collapse:collapse;margin-bottom:10px}
+  th{background:#1a3a5c;color:#fff;padding:4px 5px;text-align:center;font-size:7.5pt;font-weight:700;border:1px solid #0d2240}
+  td{padding:3px 5px;border:1px solid #ccc;vertical-align:middle;font-size:8pt}
+  .td-date{text-align:center;font-weight:700;background:#f0f4f8;line-height:1.4;min-width:36px;width:36px}
+  .td-date.wknd{background:#dbeafe;color:#1e40af}
+  .td-slot{text-align:center;font-weight:600;width:28px;min-width:28px}
+  .tr-souchou td{background:#fffbf5}
+  .tr-nicchu  td{background:#f5fff5}
+  .tr-yakan   td{background:#f5f5ff}
+  .td-date,.td-slot{white-space:nowrap}
+  .ok{color:#166534;font-weight:700}
+  .absent{color:#9ca3af}
+  .warn{color:#b91c1c;font-weight:700}
+  .note{font-size:7.5pt;color:#444}
+  @page{size:A4 portrait;margin:12mm 10mm}
+  @media print{
+    .resident-section{padding:8px 10px}
+    .page-break{page-break-before:always}
+    table{page-break-inside:auto}
+    tr{page-break-inside:avoid}
+  }
+</style>
+</head>
+<body>${sections}</body>
+</html>`;
+}
+
+function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
+  const homeName = String(rows[0]?.values[VH['ホーム名']] || '');
+  const fromD = from.replace(/-/g, '/');
+  const toD   = to.replace(/-/g, '/');
+
+  // 日付ごとにグループ化
+  const byDate = new Map();
+  for (const row of rows) {
+    const d = _toDateStr(row.values[VH['報告日']]);
+    if (!byDate.has(d)) byDate.set(d, []);
+    byDate.get(d).push(row);
+  }
+  const slotOrd = {'早朝':0,'日中':1,'夜間':2};
+  const dates = [...byDate.keys()].sort();
+
+  let tbody = '';
+  for (const date of dates) {
+    const dayRows = byDate.get(date).sort((a,b) =>
+      (slotOrd[a.values[VH['時間帯']]]??9) - (slotOrd[b.values[VH['時間帯']]]??9)
+    );
+    const dt   = new Date(date + 'T00:00:00');
+    const dow  = '日月火水木金土'[dt.getDay()];
+    const wknd = dt.getDay()===0||dt.getDay()===6;
+    const mm   = parseInt(date.slice(5,7));
+    const dd   = parseInt(date.slice(8,10));
+    const dateHtml = `${mm}/${dd}<br><span style="font-size:7pt">(${dow})</span>`;
+
+    dayRows.forEach((row, i) => {
+      const v    = row.values;
+      const slot = String(v[VH['時間帯']]||'');
+      const trCls= slot==='早朝'?'tr-souchou':slot==='日中'?'tr-nicchu':'tr-yakan';
+      const riyou= String(v[VH['利用の有無']]||'');
+      const ijo  = String(v[VH['異常の有無']]||'');
+      const tacho= [v[VH['体調確認時間']], v[VH['体調確認方法']]].filter(Boolean).join(' ');
+      const shien= String(v[VH['支援内容']]||'');
+      // 食事/活動/夜間を1セルにまとめる
+      let activity = '';
+      if (slot==='早朝') {
+        const parts=[v[VH['食事内容']]&&`朝:${v[VH['食事内容']]}`, v[VH['昼食準備']]&&`昼準備:${v[VH['昼食準備']]}`].filter(Boolean);
+        activity = parts.join(' / ');
+      } else if (slot==='日中') {
+        const parts=[v[VH['食事内容']]&&`夕:${v[VH['食事内容']]}`, v[VH['活動内容']]].filter(Boolean);
+        activity = parts.join(' / ');
+      } else {
+        const parts=[v[VH['夜間支援']], v[VH['巡回時間']]&&`巡回:${v[VH['巡回時間']]}`].filter(Boolean);
+        activity = parts.join('\n');
+      }
+      const biko = String(v[VH['備考']]||'');
+      const gaihaku = slot==='夜間'&&String(v[VH['外泊']]||'')==='有' ? '【外泊】' : '';
+
+      tbody += `<tr class="${trCls}">
+        ${i===0 ? `<td rowspan="${dayRows.length}" class="td-date${wknd?' wknd':''}">${dateHtml}</td>` : ''}
+        <td class="td-slot">${_esc(slot)}</td>
+        <td style="width:52px">${_esc(String(v[VH['担当職員名']]||''))}</td>
+        <td class="${riyou==='有'?'ok':'absent'}" style="text-align:center;width:22px">${_esc(riyou||'-')}</td>
+        <td class="${ijo==='あり'?'warn':''}" style="text-align:center;width:28px">${ijo==='あり'?'⚠あり':'－'}</td>
+        <td style="width:72px">${_esc(tacho)}</td>
+        <td class="note">${_esc(shien)}</td>
+        <td class="note" style="width:90px;white-space:pre-wrap">${_esc(activity)}${gaihaku?`<br><strong>${gaihaku}</strong>`:''}</td>
+        <td class="note" style="width:82px">${_esc(biko)}</td>
+      </tr>`;
+    });
+  }
+
+  return `<div class="resident-section${addPageBreak?' page-break':''}">
+    <div class="report-header">
+      <div class="home">${_esc(homeName)}</div>
+      <h2>${_esc(name)} 様　日報記録</h2>
+      <div class="meta">${_esc(fromD)} 〜 ${_esc(toD)}　（${dates.length}日分）</div>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:36px">日付</th>
+        <th style="width:28px">時間帯</th>
+        <th style="width:52px">担当職員</th>
+        <th style="width:22px">利用</th>
+        <th style="width:28px">異常</th>
+        <th style="width:72px">体調確認</th>
+        <th>支援内容</th>
+        <th style="width:90px">食事・活動</th>
+        <th style="width:82px">備考</th>
+      </tr></thead>
+      <tbody>${tbody}</tbody>
+    </table>
+  </div>`;
 }
 
 // ==============================

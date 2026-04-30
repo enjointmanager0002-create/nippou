@@ -2783,7 +2783,7 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
       const ijo  = String(v[VH['異常の有無']]||'');
       const tacho= [_toTimeStr(v[VH['体調確認時間']]), v[VH['体調確認方法']]].filter(Boolean).join('\n');
       const shien= String(v[VH['支援内容']]||'');
-      const biko = String(v[VH['備考']]||'');
+      let biko = String(v[VH['備考']]||'');
       const gaihaku = slot==='夜間' && String(v[VH['外泊']]||'')==='有';
 
       // 食事列
@@ -2802,8 +2802,13 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
       } else if (slot==='日中') {
         katsudoCell = String(v[VH['活動内容']]||'');
       } else {
-        const parts=[v[VH['夜間支援']], v[VH['巡回時間']]&&`巡回:${v[VH['巡回時間']]}`].filter(Boolean);
-        katsudoCell = (gaihaku ? '【外泊】\n' : '') + parts.join('\n');
+        // 夜間: 活動列は巡回時間と外泊のみ。夜間支援の内容は備考欄へ移動
+        katsudoCell = [
+          gaihaku ? '【外泊】' : '',
+          v[VH['巡回時間']] ? `巡回:${_toTimeStr(v[VH['巡回時間']])}` : ''
+        ].filter(Boolean).join(' ');
+        const yakanText = String(v[VH['夜間支援']]||'');
+        if (yakanText) biko = [yakanText, biko].filter(Boolean).join('\n');
       }
 
       tbody += `<tr class="${trCls}">
@@ -2859,6 +2864,9 @@ function openEditModal(excelRow) {
   if (!found) { showToast('編集データが見つかりません', 'error'); return; }
   const v = found.values;
 
+  const slot = String(v[VH['時間帯']]||'');
+
+  // slots配列で表示する時間帯を制限。省略時はすべての時間帯で表示
   const sections = [
     { title: '基本情報', fields: [
       { key: '報告日',    type: 'date'   },
@@ -2868,26 +2876,26 @@ function openEditModal(excelRow) {
     ]},
     { title: '職員情報', fields: [
       { key: '担当職員名', type: 'text'   },
-      { key: '勤務体系',   type: 'text'   },
+      { key: '勤務体系',   type: 'text',   slots: ['日中','夜間'] },
       { key: '職員食事',   type: 'select', opts: ['有','無',''] },
     ]},
     { title: '利用者状態', fields: [
       { key: '利用の有無',   type: 'select', opts: ['有','無',''] },
-      { key: '異常の有無',   type: 'select', opts: ['有','無',''] },
-      { key: '体調確認時間', type: 'text'   },
-      { key: '体調確認方法', type: 'select', opts: ['様子から確認','会話で確認',''] },
+      { key: '異常の有無',   type: 'select', opts: ['有','無',''], slots: ['早朝','夜間'] },
+      { key: '体調確認時間', type: 'text',                         slots: ['早朝','日中'] },
+      { key: '体調確認方法', type: 'select', opts: ['様子から確認','会話で確認',''], slots: ['早朝'] },
     ]},
     { title: '支援・食事', fields: [
-      { key: '支援内容',    type: 'textarea' },
-      { key: '食事内容',    type: 'text'     },
-      { key: '昼食準備',    type: 'text'     },
-      { key: '活動内容',    type: 'text'     },
-      { key: '連携及び調整', type: 'textarea' },
+      { key: '支援内容',    type: 'textarea', slots: ['早朝','日中'] },
+      { key: '食事内容',    type: 'text',     slots: ['早朝','日中'] },
+      { key: '昼食準備',    type: 'text',     slots: ['早朝'] },
+      { key: '活動内容',    type: 'text',     slots: ['日中'] },
+      { key: '連携及び調整', type: 'textarea', slots: ['日中'] },
     ]},
     { title: '夜間情報', fields: [
-      { key: '外泊',    type: 'select',   opts: ['有','無',''] },
-      { key: '夜間支援', type: 'textarea' },
-      { key: '巡回時間', type: 'text'     },
+      { key: '外泊',    type: 'select',   opts: ['有','無',''], slots: ['夜間'] },
+      { key: '夜間支援', type: 'textarea',                      slots: ['夜間'] },
+      { key: '巡回時間', type: 'text',                          slots: ['夜間'] },
     ]},
     { title: 'その他', fields: [
       { key: '備考', type: 'textarea' },
@@ -2896,8 +2904,10 @@ function openEditModal(excelRow) {
 
   let html = '';
   for (const sec of sections) {
+    const visibleFields = sec.fields.filter(f => !f.slots || f.slots.includes(slot));
+    if (!visibleFields.length) continue;
     html += `<div class="edit-section-title">${escHtml(sec.title)}</div>`;
-    for (const f of sec.fields) {
+    for (const f of visibleFields) {
       const val = String(v[VH[f.key]] ?? '');
       const id  = `ef-${f.key}`;
       let inp = '';

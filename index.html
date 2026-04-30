@@ -2417,17 +2417,27 @@ async function runSeedInsert() {
   prog.textContent   = 'データ生成中...';
   const rows  = _generateSeedRows(homeName, residents, staffList);
   const total = rows.length;
-  const BATCH = 50;
+  const BATCH = 100;
   let done = 0;
   try {
+    // ワークシート取得
+    const wsInfo  = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
+    const sheetId = encodeURIComponent(wsInfo.value[0].id);
+    // 現在の最終行を取得
+    const used    = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets/${sheetId}/usedRange`);
+    let nextRow   = (used.rowCount || 1) + 1;
+    const colEnd  = String.fromCharCode(64 + rows[0].length); // 21列 → 'U'
+    prog.textContent = `挿入中... 0 / ${total} 件`;
     for (let i = 0; i < rows.length; i += BATCH) {
-      const chunk = rows.slice(i, i + BATCH);
+      const chunk  = rows.slice(i, i + BATCH);
+      const endRow = nextRow + chunk.length - 1;
       await callGraph(
-        `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/add`,
-        'POST',
+        `${driveItem(state.excelFileId)}/workbook/worksheets/${sheetId}/range(address='A${nextRow}:${colEnd}${endRow}')`,
+        'PATCH',
         { values: chunk }
       );
-      done += chunk.length;
+      nextRow += chunk.length;
+      done    += chunk.length;
       prog.textContent = `挿入中... ${done} / ${total} 件`;
     }
     prog.textContent = `✓ 完了！${total}件のテストデータを挿入しました。`;

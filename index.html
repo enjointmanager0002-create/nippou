@@ -947,25 +947,22 @@
   <div class="app-content">
     <div class="card">
       <div class="card-title">検索条件</div>
-      <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end">
-        <div style="display:flex;align-items:center;gap:6px;flex:2;min-width:220px">
-          <div class="form-group" style="flex:1;margin:0">
-            <label class="form-label">開始日</label>
-            <input type="date" id="viewer-from" class="form-input" style="margin:0">
-          </div>
-          <span style="padding-top:20px;color:#888">〜</span>
-          <div class="form-group" style="flex:1;margin:0">
-            <label class="form-label">終了日</label>
-            <input type="date" id="viewer-to" class="form-input" style="margin:0">
-          </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">開始日</label>
+          <input type="date" id="viewer-from" class="form-input" style="margin:0">
         </div>
-        <div class="form-group" style="flex:1;min-width:140px;margin:0">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">終了日</label>
+          <input type="date" id="viewer-to" class="form-input" style="margin:0">
+        </div>
+        <div class="form-group" style="margin:0">
           <label class="form-label">住居</label>
           <select id="viewer-home" class="form-select" style="margin:0" onchange="updateViewerResidentFilter()">
             <option value="">全住居</option>
           </select>
         </div>
-        <div class="form-group" style="flex:1;min-width:140px;margin:0">
+        <div class="form-group" style="margin:0">
           <label class="form-label">利用者</label>
           <select id="viewer-resident" class="form-select" style="margin:0">
             <option value="">全利用者</option>
@@ -2483,8 +2480,18 @@ function _toDateStr(v) {
     const d = new Date(Math.round((v - 25569) * 86400 * 1000));
     return d.toISOString().slice(0, 10);
   }
-  // 文字列の場合: "2026/03/01" → "2026-03-01" に統一
   return String(v || '').replace(/\//g, '-').slice(0, 10);
+}
+
+// Excelが小数で返した時刻 (0〜1) を HH:MM 文字列に変換
+function _toTimeStr(v) {
+  if (typeof v === 'number' && v >= 0 && v < 1) {
+    const totalMin = Math.round(v * 24 * 60);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  }
+  return String(v || '');
 }
 
 function showViewer() {
@@ -2636,7 +2643,7 @@ function buildResidentCard(row) {
   const fields = [
     { label: '利用の有無',    value: v[VH['利用の有無']] },
     { label: '異常の有無',    value: v[VH['異常の有無']],    danger: v[VH['異常の有無']] === 'あり' },
-    { label: '体調確認時間',  value: v[VH['体調確認時間']] },
+    { label: '体調確認時間',  value: _toTimeStr(v[VH['体調確認時間']]) },
     { label: '体調確認方法',  value: v[VH['体調確認方法']] },
     { label: '支援内容',      value: v[VH['支援内容']],      full: true },
     { label: '食事内容',      value: v[VH['食事内容']] },
@@ -2707,30 +2714,30 @@ function buildPrintHtml(rows, from, to) {
 <title>日報記録 ${fromD}〜${toD}</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:'Yu Gothic','Meiryo','Hiragino Kaku Gothic ProN',sans-serif;font-size:8.5pt;color:#111;background:#fff}
-  .resident-section{padding:12px 14px}
+  body{font-family:'Yu Gothic','Meiryo','Hiragino Kaku Gothic ProN',sans-serif;font-size:8pt;color:#111;background:#fff}
+  .resident-section{padding:10px 12px}
   .page-break{page-break-before:always}
-  .report-header{margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #1a3a5c}
-  .report-header h2{font-size:13pt;font-weight:700;color:#1a3a5c}
-  .report-header .meta{font-size:8.5pt;color:#555;margin-top:2px}
-  .report-header .home{font-size:8pt;color:#888}
-  table{width:100%;border-collapse:collapse;margin-bottom:10px}
-  th{background:#1a3a5c;color:#fff;padding:4px 5px;text-align:center;font-size:7.5pt;font-weight:700;border:1px solid #0d2240}
-  td{padding:3px 5px;border:1px solid #ccc;vertical-align:middle;font-size:8pt}
-  .td-date{text-align:center;font-weight:700;background:#f0f4f8;line-height:1.4;min-width:36px;width:36px}
+  .report-header{margin-bottom:8px;padding-bottom:5px;border-bottom:2px solid #1a3a5c}
+  .report-header h2{font-size:12pt;font-weight:700;color:#1a3a5c}
+  .report-header .meta{font-size:8pt;color:#555;margin-top:2px}
+  .report-header .home{font-size:7.5pt;color:#888}
+  table{width:100%;border-collapse:collapse;margin-bottom:8px;table-layout:fixed}
+  th{background:#1a3a5c;color:#fff;padding:4px 4px;text-align:center;font-size:7pt;font-weight:700;border:1px solid #0d2240;word-break:keep-all}
+  td{padding:3px 4px;border:1px solid #ccc;vertical-align:top;font-size:7.5pt;word-break:break-all;overflow-wrap:break-word}
+  .td-date{text-align:center;font-weight:700;background:#f0f4f8;line-height:1.5;vertical-align:middle}
   .td-date.wknd{background:#dbeafe;color:#1e40af}
-  .td-slot{text-align:center;font-weight:600;width:28px;min-width:28px}
+  .td-slot{text-align:center;font-weight:600}
+  .td-center{text-align:center;vertical-align:middle}
   .tr-souchou td{background:#fffbf5}
   .tr-nicchu  td{background:#f5fff5}
   .tr-yakan   td{background:#f5f5ff}
-  .td-date,.td-slot{white-space:nowrap}
   .ok{color:#166534;font-weight:700}
   .absent{color:#9ca3af}
   .warn{color:#b91c1c;font-weight:700}
-  .note{font-size:7.5pt;color:#444}
-  @page{size:A4 portrait;margin:12mm 10mm}
+  .td-confirm{background:#f9fafb}
+  @page{size:A4 portrait;margin:10mm 8mm}
   @media print{
-    .resident-section{padding:8px 10px}
+    .resident-section{padding:6px 8px}
     .page-break{page-break-before:always}
     table{page-break-inside:auto}
     tr{page-break-inside:avoid}
@@ -2766,7 +2773,7 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
     const wknd = dt.getDay()===0||dt.getDay()===6;
     const mm   = parseInt(date.slice(5,7));
     const dd   = parseInt(date.slice(8,10));
-    const dateHtml = `${mm}/${dd}<br><span style="font-size:7pt">(${dow})</span>`;
+    const dateHtml = `${mm}/${dd}<br><span style="font-size:6.5pt">(${dow})</span>`;
 
     dayRows.forEach((row, i) => {
       const v    = row.values;
@@ -2774,36 +2781,63 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
       const trCls= slot==='早朝'?'tr-souchou':slot==='日中'?'tr-nicchu':'tr-yakan';
       const riyou= String(v[VH['利用の有無']]||'');
       const ijo  = String(v[VH['異常の有無']]||'');
-      const tacho= [v[VH['体調確認時間']], v[VH['体調確認方法']]].filter(Boolean).join(' ');
+      const tacho= [_toTimeStr(v[VH['体調確認時間']]), v[VH['体調確認方法']]].filter(Boolean).join('\n');
       const shien= String(v[VH['支援内容']]||'');
-      // 食事/活動/夜間を1セルにまとめる
-      let activity = '';
+      const biko = String(v[VH['備考']]||'');
+      const gaihaku = slot==='夜間' && String(v[VH['外泊']]||'')==='有';
+
+      // 食事列
+      let shokujiCell = '';
       if (slot==='早朝') {
         const parts=[v[VH['食事内容']]&&`朝:${v[VH['食事内容']]}`, v[VH['昼食準備']]&&`昼準備:${v[VH['昼食準備']]}`].filter(Boolean);
-        activity = parts.join(' / ');
+        shokujiCell = parts.join('\n');
       } else if (slot==='日中') {
-        const parts=[v[VH['食事内容']]&&`夕:${v[VH['食事内容']]}`, v[VH['活動内容']]].filter(Boolean);
-        activity = parts.join(' / ');
+        shokujiCell = v[VH['食事内容']] ? `夕:${v[VH['食事内容']]}` : '';
+      }
+
+      // 活動列
+      let katsudoCell = '';
+      if (slot==='早朝') {
+        katsudoCell = '';
+      } else if (slot==='日中') {
+        katsudoCell = String(v[VH['活動内容']]||'');
       } else {
         const parts=[v[VH['夜間支援']], v[VH['巡回時間']]&&`巡回:${v[VH['巡回時間']]}`].filter(Boolean);
-        activity = parts.join('\n');
+        katsudoCell = (gaihaku ? '【外泊】\n' : '') + parts.join('\n');
       }
-      const biko = String(v[VH['備考']]||'');
-      const gaihaku = slot==='夜間'&&String(v[VH['外泊']]||'')==='有' ? '【外泊】' : '';
 
       tbody += `<tr class="${trCls}">
         ${i===0 ? `<td rowspan="${dayRows.length}" class="td-date${wknd?' wknd':''}">${dateHtml}</td>` : ''}
-        <td class="td-slot">${_esc(slot)}</td>
-        <td style="width:52px">${_esc(String(v[VH['担当職員名']]||''))}</td>
-        <td class="${riyou==='有'?'ok':'absent'}" style="text-align:center;width:22px">${_esc(riyou||'-')}</td>
-        <td class="${ijo==='あり'?'warn':''}" style="text-align:center;width:28px">${ijo==='あり'?'⚠あり':'－'}</td>
-        <td style="width:72px">${_esc(tacho)}</td>
-        <td class="note">${_esc(shien)}</td>
-        <td class="note" style="width:90px;white-space:pre-wrap">${_esc(activity)}${gaihaku?`<br><strong>${gaihaku}</strong>`:''}</td>
-        <td class="note" style="width:82px">${_esc(biko)}</td>
+        <td class="td-slot td-center">${_esc(slot)}</td>
+        <td>${_esc(String(v[VH['担当職員名']]||''))}</td>
+        <td class="td-center ${riyou==='有'?'ok':'absent'}">${_esc(riyou||'-')}</td>
+        <td class="td-center ${ijo==='あり'?'warn':''}">${ijo==='あり'?'⚠':'－'}</td>
+        <td style="white-space:pre-wrap">${_esc(tacho)}</td>
+        <td style="white-space:pre-wrap">${_esc(shien)}</td>
+        <td style="white-space:pre-wrap">${_esc(shokujiCell)}</td>
+        <td style="white-space:pre-wrap">${_esc(katsudoCell)}</td>
+        <td style="white-space:pre-wrap">${_esc(biko)}</td>
+        <td class="td-confirm"></td>
       </tr>`;
     });
   }
+
+  // 列幅（table-layout:fixed なので合計100%）
+  const colWidths = [
+    ['日付',     '6%'],
+    ['時間帯',   '5%'],
+    ['担当職員', '9%'],
+    ['利用',     '4%'],
+    ['異常',     '4%'],
+    ['体調確認', '10%'],
+    ['支援内容', '16%'],
+    ['食事',     '13%'],
+    ['活動',     '12%'],
+    ['備考',     '15%'],
+    ['ご確認',   '6%'],
+  ];
+  const colgroupHtml = colWidths.map(([,w]) => `<col style="width:${w}">`).join('');
+  const theadHtml = colWidths.map(([l]) => `<th>${_esc(l)}</th>`).join('');
 
   return `<div class="resident-section${addPageBreak?' page-break':''}">
     <div class="report-header">
@@ -2812,17 +2846,8 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
       <div class="meta">${_esc(fromD)} 〜 ${_esc(toD)}　（${dates.length}日分）</div>
     </div>
     <table>
-      <thead><tr>
-        <th style="width:36px">日付</th>
-        <th style="width:28px">時間帯</th>
-        <th style="width:52px">担当職員</th>
-        <th style="width:22px">利用</th>
-        <th style="width:28px">異常</th>
-        <th style="width:72px">体調確認</th>
-        <th>支援内容</th>
-        <th style="width:90px">食事・活動</th>
-        <th style="width:82px">備考</th>
-      </tr></thead>
+      <colgroup>${colgroupHtml}</colgroup>
+      <thead><tr>${theadHtml}</tr></thead>
       <tbody>${tbody}</tbody>
     </table>
   </div>`;

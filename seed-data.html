@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>テストデータ挿入ツール</title>
+  <script src="https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+      background: #f4f6f9; color: #1a1a2e; min-height: 100vh;
+      display: flex; align-items: flex-start; justify-content: center; padding: 24px;
+    }
+    .card {
+      background: white; border-radius: 14px; padding: 28px;
+      max-width: 560px; width: 100%; box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+    h1 { font-size: 20px; color: #1a3a5c; margin-bottom: 6px; }
+    .subtitle { font-size: 13px; color: #6b7280; margin-bottom: 24px; }
+    .section-title { font-size: 12px; font-weight: 700; color: #6b7280; text-transform: uppercase;
+      letter-spacing: 0.5px; margin: 20px 0 10px; padding-bottom: 4px;
+      border-bottom: 1px solid #e5e7eb; }
+    label { font-size: 13px; font-weight: 600; color: #374151; display: block; margin-bottom: 4px; }
+    input, textarea {
+      width: 100%; padding: 10px 12px; border: 1.5px solid #d1d5db;
+      border-radius: 8px; font-size: 14px; font-family: inherit;
+      outline: none; transition: border 0.2s; margin-bottom: 12px;
+    }
+    input:focus, textarea:focus { border-color: #0078d4; }
+    textarea { resize: vertical; height: 100px; }
+    .btn {
+      display: block; width: 100%; padding: 13px; border: none; border-radius: 10px;
+      font-size: 15px; font-weight: 600; cursor: pointer; transition: opacity 0.2s;
+      margin-top: 8px;
+    }
+    .btn:hover { opacity: 0.88; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: #1a3a5c; color: white; }
+    .btn-login  { background: #0078d4; color: white; }
+    .btn-danger { background: #c50f1f; color: white; font-size: 13px; padding: 10px; margin-top: 6px; }
+    #log {
+      background: #f8f9fa; border: 1px solid #e5e7eb; border-radius: 10px;
+      padding: 14px; font-size: 13px; line-height: 1.8; max-height: 280px;
+      overflow-y: auto; margin-top: 16px; display: none;
+    }
+    .log-ok   { color: #107c10; }
+    .log-err  { color: #c50f1f; }
+    .log-info { color: #1a3a5c; }
+    .progress-bar-wrap { background: #e5e7eb; border-radius: 6px; height: 10px; margin-top: 12px; display: none; }
+    .progress-bar { background: #0078d4; height: 10px; border-radius: 6px; width: 0%; transition: width 0.3s; }
+    #user-info { font-size: 13px; color: #2e7d32; background: #e8f5e9; border-radius: 8px;
+      padding: 8px 12px; margin-bottom: 16px; display: none; }
+    .warn { font-size: 12px; color: #e65100; background: #fff3e0;
+      border-radius: 8px; padding: 10px 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>テストデータ挿入ツール</h1>
+  <p class="subtitle">2026年3月分（31日間 × 3時間帯 × 利用者人数）の擬似データをSharePointに一括挿入します。</p>
+
+  <!-- ログイン -->
+  <div id="area-login">
+    <button class="btn btn-login" onclick="doLogin()">Microsoftアカウントでログイン</button>
+  </div>
+
+  <!-- ログイン後 -->
+  <div id="area-main" style="display:none">
+    <div id="user-info"></div>
+
+    <div class="section-title">住居・利用者設定</div>
+    <div>
+      <label>住居名</label>
+      <input type="text" id="home-name" value="下豊岡">
+    </div>
+    <div>
+      <label>利用者名（1行に1名）</label>
+      <textarea id="residents">山田 太郎
+鈴木 花子
+佐藤 次郎
+高橋 美子
+田中 健一</textarea>
+    </div>
+    <div>
+      <label>職員名（1行に1名）</label>
+      <textarea id="staff-list" style="height:80px">中村 みどり
+小林 健太
+伊藤 さくら
+渡辺 拓也</textarea>
+    </div>
+
+    <div class="section-title">実行</div>
+    <p class="warn">⚠️ 既存データは上書きされません。重複挿入を避けるため、一度だけ実行してください。</p>
+    <button class="btn btn-primary" id="btn-run" onclick="runInsert()">データを挿入する（3月分）</button>
+
+    <div class="progress-bar-wrap" id="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+// ==============================
+// CONFIG（index.htmlと同一）
+// ==============================
+const CFG = {
+  clientId:         '4fd40059-1485-4aab-9eb3-bda92a0797b2',
+  sharepointSiteUrl:'https://enjyoint.sharepoint.com',
+  excelFolderName:  '電子日報データ',
+  excelFileName:    '日報記録.xlsx',
+  tableName:        '日報テーブル',
+  scopes:           ['Files.ReadWrite.All', 'Sites.ReadWrite.All', 'User.Read'],
+  redirectUri:      new URL('index.html', location.href).href,
+};
+
+// ==============================
+// MSAL
+// ==============================
+const msalApp = new msal.PublicClientApplication({
+  auth: {
+    clientId:   CFG.clientId,
+    authority:  'https://login.microsoftonline.com/common',
+    redirectUri: CFG.redirectUri,
+  },
+  cache: { cacheLocation: 'sessionStorage' },
+});
+
+let _token = null;
+let _driveId = null;
+let _fileId  = null;
+
+async function doLogin() {
+  try {
+    await msalApp.initialize();
+    const resp = await msalApp.loginPopup({ scopes: CFG.scopes });
+    msalApp.setActiveAccount(resp.account);
+    const tokenResp = await msalApp.acquireTokenSilent({ scopes: CFG.scopes, account: resp.account });
+    _token = tokenResp.accessToken;
+    document.getElementById('area-login').style.display = 'none';
+    document.getElementById('area-main').style.display  = 'block';
+    const ui = document.getElementById('user-info');
+    ui.style.display = 'block';
+    ui.textContent   = `✓ ログイン済み: ${resp.account.name || resp.account.username}`;
+  } catch (e) {
+    alert('ログインエラー: ' + e.message);
+  }
+}
+
+async function callGraph(url, method = 'GET', body = null) {
+  const base = 'https://graph.microsoft.com/v1.0';
+  const opts = {
+    method,
+    headers: {
+      Authorization: `Bearer ${_token}`,
+      'Content-Type': 'application/json',
+    },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(base + url, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${res.status}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+async function initDrive() {
+  if (_driveId) return;
+  const url  = new URL(CFG.sharepointSiteUrl);
+  const site = await callGraph(`/sites/${url.hostname}:${url.pathname}`);
+  const drv  = await callGraph(`/sites/${site.id}/drive`);
+  _driveId = drv.id;
+}
+
+function driveApi(path) {
+  return `/drives/${_driveId}${path}`;
+}
+
+async function initFile() {
+  if (_fileId) return;
+  await initDrive();
+  const f = await callGraph(driveApi(`/root:/${CFG.excelFolderName}/${CFG.excelFileName}`));
+  _fileId = f.id;
+}
+
+// ==============================
+// データ生成
+// ==============================
+const KINMU_NICCHU = ['夕朝勤(17:00-翌9:00)','夕朝勤(18:00-翌9:00)','夕勤(17:00-21:00)','夕勤(18:00-21:00)'];
+const KINMU_YAKAN  = ['S夜勤(21:00-翌9:00)','S夜勤(22:00-翌9:00)'];
+
+const SHIEN_MAP = {
+  0: '服薬支援、食事提供、片付け',
+  1: '服薬支援、洗濯、相談支援',
+  2: '服薬支援、入浴援助、排泄援助、食事提供',
+  3: '服薬支援、食事提供、買い物',
+  4: '服薬支援、掃除、整容',
+};
+
+const KATSUDO_WEEK = ['仕事・アルバイト','作業所・地活','作業所・地活','デイケア','仕事・アルバイト'];
+const KATSUDO_WKND = ['休日','GHで過ごす','GHで過ごす','病院','休日'];
+
+const TACHO_TIMES = {
+  '早朝': ['06:30','07:00','07:30','08:00','08:30'],
+  '日中': ['10:00','12:30','14:00','16:00','18:00'],
+  '夜間': ['22:30','23:00','23:30','00:00'],
+};
+
+const YAKAN_SHIEN = [
+  '全員就寝確認。特変なし。',
+  '入眠確認後、巡回実施。異常なし。',
+  '夜間中の特変なし。全員安定。',
+  '巡回時、全員就寝中。異常なし。',
+];
+const JUNKAI_TIMES = [
+  '23:00 / 01:00 / 03:00 / 05:00',
+  '22:30 / 00:30 / 02:30 / 04:30',
+  '23:30 / 01:30 / 03:30 / 05:30',
+  '00:00 / 02:00 / 04:00',
+];
+const RENKEI_LIST = [
+  '特になし。',
+  '次番担当者に口頭で引継ぎ済み。',
+  '相談支援員に月次状況を報告。',
+  '特になし。',
+  'モニタリング内容について担当者間で共有済み。',
+];
+const BIKO_LIST = [
+  '','','','特変なし。','',
+  '本人より体調について相談あり。引継ぎ済み。',
+  '','','外出後帰宅。特に問題なし。','',
+];
+
+function pick(arr, seed) {
+  return arr[Math.abs(seed) % arr.length];
+}
+
+function generateAllRows(homeName, residents, staffList) {
+  const rows = [];
+  for (let day = 1; day <= 31; day++) {
+    const date   = `2026-03-${String(day).padStart(2, '0')}`;
+    const dateObj= new Date(2026, 2, day);
+    const dow    = dateObj.getDay();
+    const isWknd = dow === 0 || dow === 6;
+
+    for (let si = 0; si < 3; si++) {
+      const slot  = ['早朝','日中','夜間'][si];
+      const staff = pick(staffList, day * 3 + si);
+
+      for (let ri = 0; ri < residents.length; ri++) {
+        const name  = residents[ri];
+        const seed  = day * 31 + ri * 7 + si * 13;
+
+        // 利用の有無: 月2-3回無
+        const riyou = (day % 13 === ri % 13 && day > 10) ? '無' : '有';
+
+        // 異常の有無: 月2回程度
+        const ijo   = (day === 12 && ri === 2) || (day === 25 && ri === 3) ? 'あり' : 'なし';
+
+        const tacho = pick(TACHO_TIMES[slot], seed);
+        const hoho  = (seed % 3 === 0) ? '会話で確認' : '様子から確認';
+
+        // 勤務体系
+        let kinmu = '';
+        if (slot === '日中')  kinmu = pick(KINMU_NICCHU, seed);
+        if (slot === '夜間')  kinmu = pick(KINMU_YAKAN, seed);
+
+        // 職員食事
+        const staffMeal = slot === '夜間' ? '' : (seed % 4 === 0 ? '無' : '有');
+
+        // 食事
+        let shokuji = '';
+        if (slot === '早朝') {
+          shokuji = pick(['ご飯一式提供','ご飯一式提供','おかずのみ提供'], seed);
+        } else if (slot === '日中') {
+          shokuji = pick(['ご飯・汁物提供','ご飯・汁物提供','おかずのみ提供'], seed);
+        }
+
+        // 昼食準備（早朝のみ）
+        const chushoku = slot === '早朝' ? pick(['ご飯一式提供','ご飯一式提供','おかずのみ提供'], seed + 1) : '';
+
+        // 活動（日中のみ）
+        const katsudo = slot === '日中'
+          ? (isWknd ? pick(KATSUDO_WKND, ri) : pick(KATSUDO_WEEK, ri))
+          : '';
+
+        // 連携（日中のみ）
+        const renkei = slot === '日中' ? pick(RENKEI_LIST, seed) : '';
+
+        // 外泊（夜間のみ）
+        const gaihaku = slot === '夜間' ? (day % 11 === ri ? '有' : '無') : '';
+
+        // 夜間支援・巡回（夜間のみ）
+        const yakanShien = slot === '夜間' && riyou === '有' ? pick(YAKAN_SHIEN, seed) : '';
+        const junkai     = slot === '夜間' && riyou === '有' ? pick(JUNKAI_TIMES, day) : '';
+
+        // 支援内容
+        const shien = riyou === '有' ? (SHIEN_MAP[ri] || SHIEN_MAP[0]) : '';
+
+        // 異常ありのときの備考
+        let biko = pick(BIKO_LIST, seed);
+        if (ijo === 'あり') {
+          biko = day === 12
+            ? '昼食後に腹痛を訴えたため担当者に報告。その後様子改善を確認。'
+            : '夜間に不眠あり。翌日担当者に引継ぎ済み。';
+        }
+
+        rows.push([
+          '2026/03/01 10:00:00', // 送信日時
+          date,                   // 報告日
+          homeName,               // ホーム名
+          name,                   // 利用者名
+          slot,                   // 時間帯
+          staff,                  // 担当職員名
+          kinmu,                  // 勤務体系
+          staffMeal,              // 職員食事
+          riyou,                  // 利用の有無
+          ijo,                    // 異常の有無
+          riyou === '有' ? tacho : '', // 体調確認時間
+          riyou === '有' ? hoho  : '', // 体調確認方法
+          shien,                   // 支援内容
+          riyou === '有' ? shokuji   : '', // 食事内容
+          riyou === '有' ? chushoku  : '', // 昼食準備
+          riyou === '有' ? katsudo   : '', // 活動内容
+          riyou === '有' ? renkei    : '', // 連携及び調整
+          gaihaku,                 // 外泊
+          riyou === '有' ? yakanShien : '', // 夜間支援
+          riyou === '有' ? junkai    : '', // 巡回時間
+          biko,                    // 備考
+        ]);
+      }
+    }
+  }
+  return rows;
+}
+
+// ==============================
+// 一括挿入
+// ==============================
+function logLine(msg, cls = 'log-info') {
+  const el = document.getElementById('log');
+  el.style.display = 'block';
+  el.innerHTML += `<div class="${cls}">${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setProgress(pct) {
+  document.getElementById('progress-wrap').style.display = 'block';
+  document.getElementById('progress-bar').style.width = pct + '%';
+}
+
+async function runInsert() {
+  const homeName  = document.getElementById('home-name').value.trim();
+  const residents = document.getElementById('residents').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+  const staffList = document.getElementById('staff-list').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
+
+  if (!homeName)          { alert('住居名を入力してください'); return; }
+  if (!residents.length)  { alert('利用者名を1名以上入力してください'); return; }
+  if (!staffList.length)  { alert('職員名を1名以上入力してください'); return; }
+
+  const btn = document.getElementById('btn-run');
+  btn.disabled = true;
+
+  document.getElementById('log').innerHTML = '';
+  logLine(`住居: ${homeName} ／ 利用者: ${residents.length}名 ／ 職員: ${staffList.length}名`);
+  logLine('SharePoint接続中...');
+
+  try {
+    await initFile();
+    logLine('✓ ファイル接続完了', 'log-ok');
+
+    const rows = generateAllRows(homeName, residents, staffList);
+    const total = rows.length;
+    const BATCH = 50;
+    logLine(`データ生成完了: ${total}件 → ${Math.ceil(total / BATCH)}バッチで挿入します`);
+
+    let done = 0;
+    for (let i = 0; i < rows.length; i += BATCH) {
+      const chunk = rows.slice(i, i + BATCH);
+      await callGraph(
+        `/drives/${_driveId}/items/${_fileId}/workbook/tables('${CFG.tableName}')/rows/add`,
+        'POST',
+        { values: chunk }
+      );
+      done += chunk.length;
+      const pct = Math.round(done / total * 100);
+      setProgress(pct);
+      logLine(`  ${done}/${total}件 挿入済み (${pct}%)`, 'log-info');
+    }
+
+    logLine(`✓ 完了！${total}件のデータを挿入しました。`, 'log-ok');
+    logLine('このツールは閉じて構いません。電子日報アプリの閲覧・編集画面で確認してください。', 'log-info');
+  } catch (e) {
+    logLine('✗ エラー: ' + e.message, 'log-err');
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>

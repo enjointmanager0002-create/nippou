@@ -2964,7 +2964,7 @@ function openEditModal(excelRow) {
   html += fg('担当職員名', einput('担当職員名','text'));
   if (slot === '日中') html += fg('勤務体系', eselect('勤務体系', ['', ...KINMU_NICCHU]));
   if (slot === '夜間') html += fg('勤務体系', eselect('勤務体系', ['', ...KINMU_YAKAN]));
-  html += fg('職員食事', etoggle('職員食事', ['有','無']));
+  if (slot !== '夜間') html += fg('職員食事', etoggle('職員食事', ['有','無']));
 
   html += `<div class="edit-section-title">利用者記録</div>`;
   html += fg('利用の有無', etoggle('利用の有無', ['有','無'], {'有':'有（利用あり）','無':'無（外泊等）'}));

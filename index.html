@@ -885,34 +885,6 @@
           保存先：SharePoint (<code id="sharepoint-site-url" style="font-size:11px;word-break:break-all"></code>)
         </div>
         <button class="btn btn-secondary" onclick="resetExcelFile()">データファイルを再作成</button>
-        <button class="btn btn-secondary" style="margin-top:8px;font-size:13px" onclick="showSeedPanel()">テストデータを挿入（3月分）</button>
-        <div id="seed-panel" style="display:none;margin-top:12px;padding:12px;background:#f4f6f9;border-radius:10px;border:1px solid var(--border)">
-          <div style="font-size:13px;font-weight:600;margin-bottom:8px">テストデータ設定</div>
-          <div class="form-group" style="margin-bottom:8px">
-            <label class="form-label" style="font-size:12px">住居名</label>
-            <input type="text" id="seed-home" class="form-input" value="下豊岡" style="margin:0">
-          </div>
-          <div class="form-group" style="margin-bottom:8px">
-            <label class="form-label" style="font-size:12px">利用者名（1行1名）</label>
-            <textarea id="seed-residents" class="form-input" rows="5" style="margin:0;resize:vertical">山田 太郎
-鈴木 花子
-佐藤 次郎
-高橋 美子
-田中 健一</textarea>
-          </div>
-          <div class="form-group" style="margin-bottom:10px">
-            <label class="form-label" style="font-size:12px">職員名（1行1名）</label>
-            <textarea id="seed-staff" class="form-input" rows="4" style="margin:0;resize:vertical">中村 みどり
-小林 健太
-伊藤 さくら
-渡辺 拓也</textarea>
-          </div>
-          <div id="seed-progress" style="display:none;font-size:12px;color:var(--text-muted);margin-bottom:8px"></div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-primary" style="font-size:13px" onclick="runSeedInsert()">挿入開始</button>
-            <button class="btn btn-secondary" style="font-size:13px" onclick="document.getElementById('seed-panel').style.display='none'">キャンセル</button>
-          </div>
-        </div>
       </div>
     </div>
 
@@ -1019,6 +991,7 @@ const CONFIG = {
   // 保存先フォルダ・ファイル名
   excelFolderName: '電子日報データ',
   excelFileName: '日報記録.xlsx',
+  settingsFileName: '日報設定.json',
 
   // 管理者PINコード（設定画面の接続設定へのアクセスに使用）
   adminPin: 'uexui82OEKPBVh',
@@ -1224,11 +1197,13 @@ async function getToken() {
 }
 
 async function afterLogin() {
-  setLoading('OneDriveに接続中...');
+  setLoading('SharePointに接続中...');
   try {
     state.token = await getToken();
     document.getElementById('user-name').textContent = state.account.name || state.account.username;
     await initExcelFile();
+    setLoading('設定を読み込み中...');
+    await loadSettingsFromCloud();
     loadSettings();
     initForm();
     showScreen('main');
@@ -1415,6 +1390,52 @@ async function appendRowFallback(rowData) {
 }
 
 // ==============================
+// SETTINGS CLOUD SYNC
+// ==============================
+async function loadSettingsFromCloud() {
+  try {
+    await initSharepointDrive();
+    const token = await getToken();
+    const url = `https://graph.microsoft.com/v1.0` +
+      driveApi(`/root:/${CONFIG.excelFolderName}/${CONFIG.settingsFileName}:/content`);
+    const res = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem('nippou_settings', JSON.stringify(data));
+    }
+    // 404（初回・ファイル未作成）は無視して localStorage をそのまま使う
+  } catch (e) {
+    console.warn('設定のクラウド読み込みをスキップ:', e.message);
+  }
+}
+
+async function saveSettingsToCloud(settings) {
+  try {
+    await initSharepointDrive();
+    const token = await getToken();
+    const json = JSON.stringify(settings, null, 2);
+    const bytes = new TextEncoder().encode(json);
+    const url = `https://graph.microsoft.com/v1.0` +
+      driveApi(`/root:/${CONFIG.excelFolderName}/${CONFIG.settingsFileName}:/content`);
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: bytes
+    });
+    if (!res.ok) throw new Error(`設定保存エラー: ${res.status}`);
+  } catch (e) {
+    // 保存失敗時もローカルには保存済みなのでエラーのみ通知
+    showToast('クラウドへの設定保存に失敗しました。ローカルには保存されています。', 'error');
+    console.error('saveSettingsToCloud error:', e);
+  }
+}
+
+// ==============================
 // SETTINGS & LOCAL STORAGE
 // ==============================
 function loadSettings() {
@@ -1426,17 +1447,22 @@ function loadSettings() {
   return saved;
 }
 
-function saveSettings() {
+async function saveSettings() {
   try {
     const homes = _collectHomesFromDOM();
     const staffNames = _collectStaffFromDOM();
-    localStorage.setItem('nippou_settings', JSON.stringify({ homes, staffNames }));
+    const settings = { homes, staffNames };
+    // ローカルに即時保存（画面は先に切り替える）
+    localStorage.setItem('nippou_settings', JSON.stringify(settings));
     const hasAny = homes.some(h => h.residents.length > 0);
     const banner = document.getElementById('main-config-banner');
     if (banner) banner.classList.toggle('hidden', hasAny);
     showScreen('main');
     initForm();
-    showToast('設定を保存しました', 'success');
+    showToast('設定を保存中...', 'success');
+    // SharePointにも保存（非同期・完了後にトースト更新）
+    await saveSettingsToCloud(settings);
+    showToast('設定をクラウドに保存しました', 'success');
   } catch (e) {
     showToast('保存エラー: ' + e.message, 'error');
     console.error('saveSettings error:', e);
@@ -2396,125 +2422,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   initMsal();
 });
-
-// ==============================
-// SEED DATA
-// ==============================
-function showSeedPanel() {
-  // 設定から住居・利用者・職員を自動入力
-  const { homes, staffNames } = getSettings();
-  if (homes.length > 0 && homes[0].name) {
-    document.getElementById('seed-home').value = homes[0].name;
-  }
-  if (homes.length > 0 && homes[0].residents.length > 0) {
-    document.getElementById('seed-residents').value =
-      homes[0].residents.map(r => (typeof r === 'string' ? r : r.name)).filter(Boolean).join('\n');
-  }
-  if (staffNames.length > 0) {
-    document.getElementById('seed-staff').value =
-      staffNames.map(s => (typeof s === 'string' ? s : s.name)).filter(Boolean).join('\n');
-  }
-  document.getElementById('seed-panel').style.display = 'block';
-}
-
-function _seedPick(arr, seed) {
-  return arr[Math.abs(seed) % arr.length];
-}
-
-function _generateSeedRows(homeName, residents, staffList) {
-  const KINMU_N = ['夕朝勤(17:00-翌9:00)','夕朝勤(18:00-翌9:00)','夕勤(17:00-21:00)','夕勤(18:00-21:00)'];
-  const KINMU_Y = ['S夜勤(21:00-翌9:00)','S夜勤(22:00-翌9:00)'];
-  const SHIEN_M = {
-    0:'服薬支援、食事提供、片付け', 1:'服薬支援、洗濯、相談支援',
-    2:'服薬支援、入浴援助、排泄援助、食事提供', 3:'服薬支援、食事提供、買い物',
-    4:'服薬支援、掃除、整容',
-  };
-  const KTWD = ['仕事・アルバイト','作業所・地活','作業所・地活','デイケア','仕事・アルバイト'];
-  const KTWK = ['休日','GHで過ごす','GHで過ごす','病院','休日'];
-  const TACHO = { '早朝':['06:30','07:00','07:30','08:00','08:30'], '日中':['10:00','12:30','14:00','16:00','18:00'], '夜間':['22:30','23:00','23:30','00:00'] };
-  const YSHIEN = ['全員就寝確認。特変なし。','入眠確認後、巡回実施。異常なし。','夜間中の特変なし。全員安定。','巡回時、全員就寝中。異常なし。'];
-  const JUNKAI = ['23:00 / 01:00 / 03:00 / 05:00','22:30 / 00:30 / 02:30 / 04:30','23:30 / 01:30 / 03:30 / 05:30','00:00 / 02:00 / 04:00'];
-  const RENKEI = ['特になし。','次番担当者に口頭で引継ぎ済み。','相談支援員に月次状況を報告。','特になし。','モニタリング内容について担当者間で共有済み。'];
-  const BIKO   = ['','','','特変なし。','','本人より体調について相談あり。引継ぎ済み。','','','外出後帰宅。特に問題なし。',''];
-  const rows = [];
-  for (let day = 1; day <= 31; day++) {
-    const date   = `2026-03-${String(day).padStart(2, '0')}`;
-    const isWknd = [0, 6].includes(new Date(2026, 2, day).getDay());
-    for (let si = 0; si < 3; si++) {
-      const slot  = ['早朝','日中','夜間'][si];
-      const staff = _seedPick(staffList, day * 3 + si);
-      for (let ri = 0; ri < residents.length; ri++) {
-        const name = residents[ri];
-        const seed = day * 31 + ri * 7 + si * 13;
-        const riyou     = (day % 13 === ri % 13 && day > 10) ? '無' : '有';
-        const ijo       = (day === 12 && ri === 2) || (day === 25 && ri === 3) ? 'あり' : 'なし';
-        const staffMeal = slot === '夜間' ? '' : (seed % 4 === 0 ? '無' : '有');
-        const kinmu     = slot === '日中' ? _seedPick(KINMU_N, seed) : slot === '夜間' ? _seedPick(KINMU_Y, seed) : '';
-        const shokuji   = riyou === '有' ? (slot === '早朝' ? _seedPick(['ご飯一式提供','ご飯一式提供','おかずのみ提供'], seed) : slot === '日中' ? _seedPick(['ご飯・汁物提供','ご飯・汁物提供','おかずのみ提供'], seed) : '') : '';
-        const chushoku  = riyou === '有' && slot === '早朝' ? _seedPick(['ご飯一式提供','ご飯一式提供','おかずのみ提供'], seed + 1) : '';
-        const katsudo   = riyou === '有' && slot === '日中' ? (isWknd ? _seedPick(KTWK, ri) : _seedPick(KTWD, ri)) : '';
-        const renkei    = riyou === '有' && slot === '日中' ? _seedPick(RENKEI, seed) : '';
-        const gaihaku   = slot === '夜間' ? (day % 11 === ri ? '有' : '無') : '';
-        const yakanS    = riyou === '有' && slot === '夜間' ? _seedPick(YSHIEN, seed) : '';
-        const junkai    = riyou === '有' && slot === '夜間' ? _seedPick(JUNKAI, day) : '';
-        let biko = _seedPick(BIKO, seed);
-        if (ijo === 'あり') biko = day === 12 ? '昼食後に腹痛を訴えたため担当者に報告。その後様子改善を確認。' : '夜間に不眠あり。翌日担当者に引継ぎ済み。';
-        rows.push([
-          '2026/03/01 10:00:00', date, homeName, name, slot, staff, kinmu, staffMeal,
-          riyou, ijo,
-          riyou === '有' ? _seedPick(TACHO[slot], seed) : '',
-          riyou === '有' ? (seed % 3 === 0 ? '会話で確認' : '様子から確認') : '',
-          riyou === '有' ? (SHIEN_M[ri] || SHIEN_M[0]) : '',
-          shokuji, chushoku, katsudo, renkei, gaihaku, yakanS, junkai, biko,
-        ]);
-      }
-    }
-  }
-  return rows;
-}
-
-async function runSeedInsert() {
-  const homeName  = document.getElementById('seed-home').value.trim();
-  const residents = document.getElementById('seed-residents').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-  const staffList = document.getElementById('seed-staff').value.trim().split('\n').map(s => s.trim()).filter(Boolean);
-  if (!homeName || !residents.length || !staffList.length) {
-    showToast('住居名・利用者名・職員名をすべて入力してください', 'error'); return;
-  }
-  const prog = document.getElementById('seed-progress');
-  prog.style.display = 'block';
-  prog.textContent   = 'データ生成中...';
-  const rows  = _generateSeedRows(homeName, residents, staffList);
-  const total = rows.length;
-  const BATCH = 100;
-  let done = 0;
-  try {
-    // ワークシート取得
-    const wsInfo  = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
-    const sheetId = encodeURIComponent(wsInfo.value[0].id);
-    // 現在の最終行を取得
-    const used    = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets/${sheetId}/usedRange`);
-    let nextRow   = (used.rowCount || 1) + 1;
-    const colEnd  = String.fromCharCode(64 + rows[0].length); // 21列 → 'U'
-    prog.textContent = `挿入中... 0 / ${total} 件`;
-    for (let i = 0; i < rows.length; i += BATCH) {
-      const chunk  = rows.slice(i, i + BATCH);
-      const endRow = nextRow + chunk.length - 1;
-      await callGraph(
-        `${driveItem(state.excelFileId)}/workbook/worksheets/${sheetId}/range(address='A${nextRow}:${colEnd}${endRow}')`,
-        'PATCH',
-        { values: chunk }
-      );
-      nextRow += chunk.length;
-      done    += chunk.length;
-      prog.textContent = `挿入中... ${done} / ${total} 件`;
-    }
-    prog.textContent = `✓ 完了！${total}件のテストデータを挿入しました。`;
-    showToast(`${total}件のテストデータを挿入しました`, 'success');
-  } catch (e) {
-    prog.textContent = 'エラー: ' + e.message;
-    showToast('挿入エラー: ' + e.message, 'error');
-  }
-}
 
 // ==============================
 // VIEWER

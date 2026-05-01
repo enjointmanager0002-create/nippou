@@ -1033,7 +1033,7 @@ const CONFIG = {
     '担当職員名', '勤務体系', '職員食事', '利用の有無',
     '異常の有無', '体調確認時間', '体調確認方法', '支援内容',
     '食事内容', '昼食準備', '活動内容', '連携及び調整',
-    '外泊', '夜間支援', '巡回時間', '備考'
+    '外泊', '夜間支援', '巡回時間', '備考', '体調'
   ]
 };
 
@@ -1824,10 +1824,11 @@ function createResidentBlock(resident, reportDate) {
   return div;
 }
 
-const SHIEN_OPTIONS    = ['服薬支援','食事提供','片付け','掃除','洗濯','排泄援助','入浴援助','整容','相談支援','買い物','金銭管理'];
+const SHIEN_OPTIONS    = ['服薬支援','食事提供','片付け','掃除','洗濯','排泄援助','入浴援助','整容','相談支援','買い物','金銭管理','通院同行'];
 const FOOD_OPTIONS     = ['ご飯一式提供','おかずのみ提供','提供無し'];
 const YUSHOKU_OPTIONS  = ['ご飯・汁物提供','おかずのみ提供','提供なし'];
 const KATSUDO_OPTIONS  = ['仕事・アルバイト','作業所・地活','デイケア','病院','訪問看護','休日','GHで過ごす'];
+const TAIJO_OPTIONS    = ['安定','良好','普通','不良','不安定'];
 const KINMU_NICCHU     = ['夕朝勤(14:00-翌9:00)','夕朝勤(15:00-翌9:00)','夕朝勤(16:00-翌9:00)','夕朝勤(17:00-翌9:00)','夕朝勤(18:00-翌9:00)','夕朝勤(19:00-翌9:00)','夕勤(14:00-21:00)','夕勤(15:00-21:00)','夕勤(16:00-21:00)','夕勤(17:00-21:00)','その他'];
 const KINMU_YAKAN      = ['S夜勤(21:00-翌9:00)','S夜勤(22:00-翌9:00)','その他'];
 
@@ -1951,6 +1952,13 @@ function renderResidentForm(name) {
           <option value="会話で確認">会話で確認</option>
         </select>
       </div>
+      <div class="form-group">
+        <label class="form-label">体調</label>
+        <select class="form-select" onchange="setResidentField('${key}', 'taijo', this.value)">
+          <option value="">選択してください</option>
+          ${TAIJO_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
+        </select>
+      </div>
       <div class="section-divider">支援・食事</div>
       <div class="form-group">
         <label class="form-label">支援内容</label>
@@ -2000,6 +2008,13 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">体調確認時間</label>
         <input type="time" class="form-input" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
+      </div>
+      <div class="form-group">
+        <label class="form-label">体調</label>
+        <select class="form-select" onchange="setResidentField('${key}', 'taijo', this.value)">
+          <option value="">選択してください</option>
+          ${TAIJO_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
+        </select>
       </div>
       <div class="section-divider">支援・食事</div>
       <div class="form-group">
@@ -2242,7 +2257,7 @@ async function submitForm() {
       // Build row matching CONFIG.headers
       // ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系',
       //  '職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容',
-      //  '食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考']
+      //  '食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考','体調']
       const row = [
         now,                          // 送信日時
         date,                         // 報告日
@@ -2265,6 +2280,7 @@ async function submitForm() {
         d.yakanShien || '',           // 夜間支援（夜間のみ）
         d.junkai || '',               // 巡回時間（夜間のみ）
         d.biko || '',                 // 備考
+        d.taijo || '',                // 体調（早朝・日中のみ）
       ];
 
       await appendRowToExcel(row);
@@ -2503,7 +2519,7 @@ async function runSeedInsert() {
 // ==============================
 // VIEWER
 // ==============================
-const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考'];
+const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考','体調'];
 const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
 let _viewerRows = [];
 
@@ -2678,6 +2694,7 @@ function buildResidentCard(row) {
     { label: '異常の有無',    value: v[VH['異常の有無']],    danger: v[VH['異常の有無']] === 'あり' },
     { label: '体調確認時間',  value: _toTimeStr(v[VH['体調確認時間']]) },
     { label: '体調確認方法',  value: v[VH['体調確認方法']] },
+    { label: '体調',          value: v[VH['体調']] },
     { label: '支援内容',      value: v[VH['支援内容']],      full: true },
     { label: '食事内容',      value: v[VH['食事内容']] },
     { label: '昼食準備',      value: v[VH['昼食準備']] },
@@ -2814,7 +2831,7 @@ function buildResidentPrintSection(name, rows, from, to, addPageBreak) {
       const trCls= slot==='早朝'?'tr-souchou':slot==='日中'?'tr-nicchu':'tr-yakan';
       const riyou= String(v[VH['利用の有無']]||'');
       const ijo  = String(v[VH['異常の有無']]||'');
-      const tacho= [_toTimeStr(v[VH['体調確認時間']]), v[VH['体調確認方法']]].filter(Boolean).join('\n');
+      const tacho= [_toTimeStr(v[VH['体調確認時間']]), v[VH['体調確認方法']], v[VH['体調']]].filter(Boolean).join('\n');
       const shien= String(v[VH['支援内容']]||'');
       let biko = String(v[VH['備考']]||'');
       const gaihaku = slot==='夜間' && String(v[VH['外泊']]||'')==='有';
@@ -2974,6 +2991,7 @@ function openEditModal(excelRow) {
     html += fg('異常の有無', etoggle('異常の有無', ['無','有']));
     html += fg('体調確認時間', einput('体調確認時間','time'));
     html += fg('体調確認方法', eselect('体調確認方法', ['','様子から確認','会話で確認']));
+    html += fg('体調', eselect('体調', ['', ...TAIJO_OPTIONS]));
     html += `<div class="edit-section-title">支援・食事</div>`;
     html += fg('支援内容', echips('支援内容'));
     html += fg('朝食準備 / 朝食内容', efood('食事内容', FOOD_OPTIONS, '朝食内容', '用意した朝食の内容を記入'));
@@ -2983,6 +3001,7 @@ function openEditModal(excelRow) {
     html += fg('活動内容', eselect('活動内容', ['', ...KATSUDO_OPTIONS]));
     html += `<div class="edit-section-title">体調確認</div>`;
     html += fg('体調確認時間', einput('体調確認時間','time'));
+    html += fg('体調', eselect('体調', ['', ...TAIJO_OPTIONS]));
     html += `<div class="edit-section-title">支援・食事</div>`;
     html += fg('支援内容', echips('支援内容'));
     html += fg('夕食準備 / 夕食内容', efood('食事内容', YUSHOKU_OPTIONS, '夕食内容', '用意した夕食の内容を記入'));

@@ -798,6 +798,15 @@
         <p class="field-error" id="error-kinmu">この項目が入力されていません</p>
       </div>
 
+      <div id="group-staff-meal" class="form-group hidden">
+        <label class="form-label">職員食事<span class="required">*</span></label>
+        <div class="toggle-group">
+          <button class="toggle-btn" id="toggle-staff-meal-yes" onclick="toggleSelect('staff-meal', '有')">有</button>
+          <button class="toggle-btn" id="toggle-staff-meal-no" onclick="toggleSelect('staff-meal', '無')">無</button>
+        </div>
+        <p class="field-error" id="error-staff-meal">この項目が入力されていません</p>
+      </div>
+
     </div>
 
     <!-- Residents Card -->
@@ -1769,7 +1778,9 @@ function selectTimeSlot(slot) {
   if (needsKinmu) updateKinmuOptions(slot);
   // 日中のみ必須（夜間は任意）
   document.getElementById('label-kinmu').innerHTML =
-    slot === '日中' ? '勤務体系<span class="required">*</span>' : '勤務体系（任意）';
+    slot === '日中' ? '勤務体系<span class="required">*</span>' : '勤務体系（S夜勤時）';
+  // 職員食事は早朝・日中のみ表示
+  document.getElementById('group-staff-meal').classList.toggle('hidden', slot === '夜間');
 
   renderResidents();
   updateSubmitState();
@@ -2190,6 +2201,11 @@ function validateForm() {
 
   // 全時間帯: 職員氏名
   setErr('error-staff-name', !document.getElementById('input-staff-name').value.trim());
+
+  // 早朝・日中: 職員食事（必須）
+  if (slot === '早朝' || slot === '日中') {
+    setErr('error-staff-meal', !state.staffMeal);
+  }
 
   // 日中のみ: 勤務体系（必須）
   if (slot === '日中') {

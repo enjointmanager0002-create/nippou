@@ -783,11 +783,11 @@
 
       <div class="form-group">
         <label class="form-label">担当職員氏名<span class="required">*</span></label>
-        <select id="input-staff-name" class="form-select" onchange="updateSubmitState(); clearError('error-staff-name')">
+        <select id="input-staff-name" class="form-select" onchange="onStaffSelectChange()">
           <option value="">職員を選択してください</option>
         </select>
         <p class="field-error" id="error-staff-name">この項目が入力されていません</p>
-        <p style="font-size:12px;color:#888;margin:4px 0 0">職員名は設定画面から追加・管理できます</p>
+        <p style="font-size:12px;color:#888;margin:4px 0 0">初回勤務の方はドロップダウン末尾から登録できます</p>
       </div>
 
       <div id="group-kinmu" class="form-group hidden">
@@ -851,23 +851,34 @@
   </div>
   <div class="settings-content">
 
-    <div class="card">
-      <div class="card-title">住居・利用者設定</div>
-      <div id="home-list"></div>
-      <button class="btn-add-resident" onclick="addHomeBlock()" style="margin-top:8px">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        住居を追加
-      </button>
+    <!-- 管理者ロックバナー（未認証時） -->
+    <div id="settings-lock-banner" class="card" style="text-align:center;padding:24px 20px">
+      <div style="font-size:36px;margin-bottom:8px">🔒</div>
+      <div style="font-size:15px;font-weight:700;margin-bottom:6px">管理者専用エリア</div>
+      <div style="font-size:12px;color:#888;margin-bottom:16px">住居・利用者設定と職員名登録は<br>管理者のみ操作できます</div>
+      <button class="btn btn-primary" style="max-width:220px;margin:0 auto" onclick="showAdminUnlock()">管理者PINを入力する</button>
     </div>
 
-    <div class="card">
-      <div class="card-title">職員名登録</div>
-      <p style="font-size:12px;color:#888;margin:0 0 8px">担当住居にチェックを入れてください</p>
-      <div id="staff-name-list"></div>
-      <button class="btn-add-resident" id="btn-add-staff" onclick="addStaffNameField()" style="margin-top:8px">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-        <span class="staff-count-label">職員を追加（0/11）</span>
-      </button>
+    <!-- 管理者認証後のみ表示 -->
+    <div id="settings-admin-section" style="display:none">
+      <div class="card">
+        <div class="card-title">住居・利用者設定</div>
+        <div id="home-list"></div>
+        <button class="btn-add-resident" onclick="addHomeBlock()" style="margin-top:8px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          住居を追加
+        </button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">職員名登録</div>
+        <p style="font-size:12px;color:#888;margin:0 0 8px">担当住居にチェックを入れてください</p>
+        <div id="staff-name-list"></div>
+        <button class="btn-add-resident" id="btn-add-staff" onclick="addStaffNameField()" style="margin-top:8px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          <span class="staff-count-label">職員を追加（0/11）</span>
+        </button>
+      </div>
     </div>
 
     <div class="card" id="card-connection">
@@ -905,6 +916,27 @@
 
     <div class="btn-row" style="margin-top:8px">
       <button type="button" class="btn btn-primary" onclick="saveSettings()">保存して戻る</button>
+    </div>
+  </div>
+</div>
+
+<!-- 初回職員登録モーダル -->
+<div id="new-staff-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:16px;padding:24px;width:min(320px,90vw);box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+    <div style="font-size:16px;font-weight:700;margin-bottom:4px;text-align:center">初回勤務登録</div>
+    <div style="font-size:12px;color:#888;text-align:center;margin-bottom:16px">氏名と担当住居を登録してください</div>
+    <div class="form-group" style="margin-bottom:12px">
+      <label class="form-label">漢字フルネーム（スペースなし）</label>
+      <input type="text" id="new-staff-name-input" class="form-input" placeholder="例：山田太郎" style="margin:0" oninput="document.getElementById('new-staff-name-error').style.display='none'">
+      <div id="new-staff-name-error" style="display:none;color:#c62828;font-size:12px;margin-top:4px"></div>
+    </div>
+    <div class="form-group" style="margin-bottom:20px">
+      <label class="form-label">担当住居（複数可）</label>
+      <div id="new-staff-home-checks" style="display:flex;flex-direction:column;gap:10px;margin-top:6px"></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-secondary" style="flex:1" onclick="closeNewStaffModal()">キャンセル</button>
+      <button class="btn btn-primary" style="flex:1" onclick="submitNewStaff()">登録する</button>
     </div>
   </div>
 </div>
@@ -1617,8 +1649,83 @@ function populateStaffDropdown(selectedName) {
     ? staffNames.filter(s => (s.homes || []).includes(state.selectedHome))
     : staffNames;
   sel.innerHTML = '<option value="">職員を選択してください</option>' +
-    filtered.map(s => `<option value="${escHtml(s.name)}"${s.name === current ? ' selected' : ''}>${escHtml(s.name)}</option>`).join('');
+    filtered.map(s => `<option value="${escHtml(s.name)}"${s.name === current ? ' selected' : ''}>${escHtml(s.name)}</option>`).join('') +
+    '<option value="__new_staff__" style="color:var(--accent);border-top:1px solid #eee">＋ 初回勤務の方はこちらから登録</option>';
   if (!filtered.some(s => s.name === current)) sel.value = '';
+}
+
+function onStaffSelectChange() {
+  const sel = document.getElementById('input-staff-name');
+  if (sel.value === '__new_staff__') {
+    sel.value = '';
+    showNewStaffModal();
+  } else {
+    updateSubmitState();
+    clearError('error-staff-name');
+  }
+}
+
+function showNewStaffModal() {
+  const { homes } = getSettings();
+  const container = document.getElementById('new-staff-home-checks');
+  container.innerHTML = homes.length
+    ? homes.map(h => `
+        <label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer">
+          <input type="checkbox" class="new-staff-home-check" value="${escHtml(h.name)}"
+                 style="width:18px;height:18px;accent-color:var(--accent)">
+          ${escHtml(h.name)}
+        </label>`).join('')
+    : '<div style="font-size:12px;color:#888">住居が登録されていません</div>';
+  document.getElementById('new-staff-name-input').value = '';
+  document.getElementById('new-staff-name-error').style.display = 'none';
+  document.getElementById('new-staff-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('new-staff-name-input').focus(), 100);
+}
+
+function closeNewStaffModal() {
+  document.getElementById('new-staff-modal').style.display = 'none';
+}
+
+async function submitNewStaff() {
+  const nameInput = document.getElementById('new-staff-name-input');
+  const errEl = document.getElementById('new-staff-name-error');
+  const name = nameInput.value.trim();
+
+  // バリデーション
+  if (!name) {
+    errEl.textContent = '氏名を入力してください';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (/\s/.test(name)) {
+    errEl.textContent = 'スペースは入れないでください（例：山田太郎）';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  const checkedHomes = Array.from(document.querySelectorAll('.new-staff-home-check:checked')).map(cb => cb.value);
+  const settings = getSettings();
+
+  // 重複チェック
+  if (settings.staffNames.some(s => s.name === name)) {
+    errEl.textContent = 'この氏名はすでに登録されています';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  // 追加して保存
+  settings.staffNames.push({ name, homes: checkedHomes });
+  localStorage.setItem('nippou_settings', JSON.stringify(settings));
+  closeNewStaffModal();
+  showToast('登録中...', 'success');
+  await saveSettingsToCloud(settings);
+  showToast(`${name} さんを登録しました`, 'success');
+
+  // ドロップダウン更新・選択
+  populateStaffDropdown(name);
+  document.getElementById('input-staff-name').value = name;
+  updateSubmitState();
+  clearError('error-staff-name');
 }
 
 
@@ -1718,10 +1825,16 @@ function checkAdminPin() {
   if (entered === String(CONFIG.adminPin)) {
     sessionStorage.setItem('admin_unlocked', '1');
     hideAdminUnlock();
+    // 接続設定を解除
     document.getElementById('admin-locked-area').style.display = 'none';
     document.getElementById('admin-unlocked-area').style.display = 'block';
     const urlEl = document.getElementById('sharepoint-site-url');
     if (urlEl) urlEl.textContent = CONFIG.sharepointSiteUrl || '（未設定）';
+    // 住居・職員設定エリアを解除
+    const lockBanner = document.getElementById('settings-lock-banner');
+    const adminSection = document.getElementById('settings-admin-section');
+    if (lockBanner) lockBanner.style.display = 'none';
+    if (adminSection) { adminSection.style.display = 'block'; loadSettings(); }
   } else {
     document.getElementById('admin-pin-error').style.display = 'block';
     document.getElementById('admin-pin-input').value = '';
@@ -2363,7 +2476,10 @@ function showScreen(name) {
   });
 
   if (name === 'settings') {
-    loadSettings();
+    const unlocked = sessionStorage.getItem('admin_unlocked') === '1';
+    document.getElementById('settings-lock-banner').style.display  = unlocked ? 'none'  : 'block';
+    document.getElementById('settings-admin-section').style.display = unlocked ? 'block' : 'none';
+    if (unlocked) loadSettings();
     updateExcelStatus(state.excelFileId ? '接続済み' : '未接続');
   }
 }

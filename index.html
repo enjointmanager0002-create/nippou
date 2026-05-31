@@ -2336,10 +2336,7 @@ function validateForm() {
     const key = safeName(name);
     const d = state.residentData[key] || {};
 
-    // 区分チェック
-    const kubun = getKubunForDate(kubuns, reportDate);
-    if (!kubun) hasErrors = true;
-
+    // 区分が未登録・期限切れでも送信を妨げない（警告表示のみ）
     setErr(`error-riyou-${key}`, !d.riyou);
     if (slot === '早朝') {
       setErr(`error-shokuji-${key}`, !d.shokuji);
@@ -2351,9 +2348,9 @@ function validateForm() {
   }
 
   if (hasErrors) {
-    const first = document.querySelector('.field-error.visible') || document.querySelector('[id^="kubun-warn-"]');
+    const first = document.querySelector('.field-error.visible');
     if (first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    showToast('未入力または区分設定に不備があります', 'error');
+    showToast('未入力の項目があります', 'error');
   }
   return !hasErrors;
 }

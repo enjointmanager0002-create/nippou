@@ -2024,11 +2024,9 @@ function toggleEditShienChip(el, value) {
 }
 
 function updateEditJunkai() {
-  const times = [0,1,2,3]
-    .map(i => { const el = document.getElementById(`ef-junkai-${i}`); return el ? el.value : ''; })
-    .filter(Boolean);
+  const el = document.getElementById('ef-junkai-0');
   const inp = document.getElementById('ef-巡回時間');
-  if (inp) inp.value = times.join(' / ');
+  if (inp && el) inp.value = el.value;
 }
 
 function setEditToggle(fieldKey, el, value) {
@@ -2225,15 +2223,9 @@ function renderResidentForm(name) {
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">巡回時間（最大4回）</label>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px">
-          ${[1,2,3,4].map(n => `
-            <div>
-              <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">${n}回目</div>
-              <input type="time" id="junkai-${n}-${key}" class="form-input" style="margin:0"
-                     oninput="updateJunkai('${key}')">
-            </div>`).join('')}
-        </div>
+        <label class="form-label">巡回時間</label>
+        <input type="time" id="junkai-1-${key}" class="form-input"
+               oninput="updateJunkai('${key}')">
       </div>
       <div class="form-group">
         <label class="form-label">備考（相談内容・支援内容等）</label>
@@ -2257,10 +2249,8 @@ function setResidentField(key, field, value) {
 }
 
 function updateJunkai(key) {
-  const times = [1,2,3,4]
-    .map(n => { const el = document.getElementById(`junkai-${n}-${key}`); return el ? el.value : ''; })
-    .filter(Boolean);
-  setResidentField(key, 'junkai', times.join(' / '));
+  const el = document.getElementById(`junkai-1-${key}`);
+  setResidentField(key, 'junkai', el ? el.value : '');
 }
 
 function toggleSelect(group, value) {
@@ -3058,17 +3048,12 @@ function openEditModal(excelRow) {
     html += fg('夜間支援', eselect('夜間支援', ['','夜勤','当直']));
     html += `<div class="edit-section-title">異常確認・状況</div>`;
     html += fg('異常の有無', etoggle('異常の有無', ['無','有']));
-    html += fg('巡回時間（最大4回）', (() => {
+    html += fg('巡回時間', (() => {
       const raw = _str('巡回時間');
-      const parts = raw.split(/\s*\/\s*/).map(t => _toTimeStr(t) || t);
-      const pickers = [0,1,2,3].map(i => `
-        <div>
-          <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">${i+1}回目</div>
-          <input type="time" id="ef-junkai-${i}" class="form-input" style="margin:0"
-                 value="${escHtml(parts[i]||'')}" oninput="updateEditJunkai()">
-        </div>`).join('');
+      const cur = _toTimeStr(raw) || raw;
       return `<input type="hidden" id="ef-巡回時間" value="${escHtml(raw)}">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:4px">${pickers}</div>`;
+        <input type="time" id="ef-junkai-0" class="form-input" style="margin:0"
+               value="${escHtml(cur)}" oninput="updateEditJunkai()">`;
     })());
   }
 

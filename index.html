@@ -837,7 +837,7 @@
   <div class="success-detail" id="success-detail">日報が保存されました</div>
   <button class="btn btn-primary" style="max-width:280px" onclick="goToNextEntry()">続けて入力する</button>
   <div style="margin-top:12px">
-    <button class="btn btn-secondary" style="max-width:280px" onclick="showScreen('main')">メインに戻る</button>
+    <button class="btn btn-secondary" style="max-width:280px" onclick="initForm(); showScreen('main')">メインに戻る</button>
   </div>
 </div>
 
@@ -1055,6 +1055,8 @@ let state = {
   staffMeal: null,
   selectedHome: null,
   residentData: {},
+  isSubmitting: false,        // 二重送信ガード
+  submittedResidents: new Set(), // 部分失敗後の再送信でスキップするセット
 };
 
 // ==============================
@@ -2380,6 +2382,8 @@ function updateSubmitState() {
 // FORM SUBMISSION
 // ==============================
 async function submitForm() {
+  // 二重送信ガード
+  if (state.isSubmitting) return;
   if (!validateForm()) return;
 
   const date = document.getElementById('input-date').value;
@@ -2399,7 +2403,13 @@ async function submitForm() {
   }
   const homeName = state.selectedHome;
 
+  state.isSubmitting = true;
+  const btn = document.getElementById('btn-submit');
+  if (btn) btn.disabled = true;
   setLoading('保存中...');
+
+  // 部分失敗対策：送信済みの利用者をスキップするためにキーを記録
+  if (!state.submittedResidents) state.submittedResidents = new Set();
 
   try {
     const now = new Date().toLocaleString('ja-JP');
@@ -2408,6 +2418,14 @@ async function submitForm() {
     for (const r of residents) {
       const name = typeof r === 'string' ? r : r.name;
       const key = safeName(name);
+
+      // すでに今回のバッチで送信済みならスキップ（再送信ガード）
+      const batchKey = `${date}_${state.timeSlot}_${key}`;
+      if (state.submittedResidents.has(batchKey)) {
+        savedCount++;
+        continue;
+      }
+
       const d = state.residentData[key] || {};
 
       // Build row matching CONFIG.headers
@@ -2440,8 +2458,13 @@ async function submitForm() {
       ];
 
       await appendRowToExcel(row);
+      state.submittedResidents.add(batchKey); // 送信成功したらマーク
       savedCount++;
     }
+
+    // 送信成功 → データをクリアして再送信を防止
+    state.residentData = {};
+    state.submittedResidents = new Set();
 
     document.getElementById('success-detail').textContent =
       `${date}（${state.timeSlot}） / ${residents.length}名分の記録をOneDriveに保存しました`;
@@ -2451,6 +2474,9 @@ async function submitForm() {
     console.error(err);
     showScreen('main');
     showToast('保存エラー: ' + err.message, 'error');
+  } finally {
+    state.isSubmitting = false;
+    updateSubmitState(); // ボタンの有効/無効を正しく再評価
   }
 }
 

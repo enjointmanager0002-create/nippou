@@ -2346,14 +2346,17 @@ function validateForm() {
   const homeObj = homes.find(h => h.name === state.selectedHome);
   const residents = homeObj ? homeObj.residents.filter(Boolean) : [];
   const reportDate = document.getElementById('input-date')?.value || '';
+  let filledCount = 0;
   for (const r of residents) {
     const name = typeof r === 'string' ? r : r.name;
-    const kubuns = (typeof r === 'object' && r.kubuns) ? r.kubuns : [];
     const key = safeName(name);
     const d = state.residentData[key] || {};
 
-    // 区分が未登録・期限切れでも送信を妨げない（警告表示のみ）
-    setErr(`error-riyou-${key}`, !d.riyou);
+    // 「利用の有無」が未選択の利用者はスキップ（部分送信を許可）
+    if (!d.riyou) continue;
+    filledCount++;
+
+    // 入力済み利用者の食事項目を検証
     if (slot === '早朝') {
       setErr(`error-shokuji-${key}`, !d.shokuji);
       setErr(`error-chushokuJunbi-${key}`, !d.chushokuJunbi);
@@ -2361,6 +2364,11 @@ function validateForm() {
     if (slot === '日中') {
       setErr(`error-shokuji-${key}`, !d.shokuji);
     }
+  }
+  // 1名も入力されていない場合はエラー
+  if (filledCount === 0) {
+    showToast('少なくとも1名分の利用状況を入力してください', 'error');
+    hasErrors = true;
   }
 
   if (hasErrors) {
@@ -2419,14 +2427,17 @@ async function submitForm() {
       const name = typeof r === 'string' ? r : r.name;
       const key = safeName(name);
 
+      const d = state.residentData[key] || {};
+
+      // 「利用の有無」が未選択の利用者はスキップ（部分送信対応）
+      if (!d.riyou) continue;
+
       // すでに今回のバッチで送信済みならスキップ（再送信ガード）
       const batchKey = `${date}_${state.timeSlot}_${key}`;
       if (state.submittedResidents.has(batchKey)) {
         savedCount++;
         continue;
       }
-
-      const d = state.residentData[key] || {};
 
       // Build row matching CONFIG.headers
       // ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系',
@@ -2467,7 +2478,7 @@ async function submitForm() {
     state.submittedResidents = new Set();
 
     document.getElementById('success-detail').textContent =
-      `${date}（${state.timeSlot}） / ${residents.length}名分の記録をOneDriveに保存しました`;
+      `${date}（${state.timeSlot}） / ${savedCount}名分の記録をOneDriveに保存しました`;
 
     showScreen('success');
   } catch (err) {

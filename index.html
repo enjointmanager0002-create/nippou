@@ -440,6 +440,18 @@
 
     .resident-block.open .resident-body { display: block; }
 
+    .resident-block.submitted .resident-header { background: #f0faf0; }
+    .resident-block.submitted .resident-body   { background: #f8fff8; }
+    .btn-resident-send {
+      width: 100%; margin-top: 16px; padding: 13px;
+      background: var(--success); color: white; border: none;
+      border-radius: 8px; font-size: 15px; font-weight: 600;
+      cursor: pointer; display: flex; align-items: center;
+      justify-content: center; gap: 6px;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    .btn-resident-send:disabled { background: #9e9e9e; cursor: not-allowed; opacity: 0.8; }
+
     /* ===== ACTION BUTTONS ===== */
     .btn {
       display: flex;
@@ -818,9 +830,8 @@
     <!-- Submit buttons -->
     <div class="btn-row" id="submit-area">
       <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
-      <button class="btn btn-primary" id="btn-submit" onclick="submitForm()" disabled>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
-        送信する
+      <button class="btn btn-secondary" id="btn-submit" onclick="submitForm()" disabled style="font-size:13px">
+        未送信をまとめて送信
       </button>
     </div>
 
@@ -1968,6 +1979,12 @@ function createResidentBlock(resident, reportDate) {
     </div>
     <div class="resident-body">
       ${renderResidentForm(name)}
+      <div style="padding-top:14px;margin-top:4px;border-top:1.5px solid var(--border)">
+        <button class="btn-resident-send" id="btn-resident-${key}" onclick="submitResident('${escHtml(name)}')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+          この方を送信する
+        </button>
+      </div>
     </div>
   `;
 
@@ -2489,6 +2506,128 @@ async function submitForm() {
     state.isSubmitting = false;
     updateSubmitState(); // ボタンの有効/無効を正しく再評価
   }
+}
+
+// ==============================
+// 利用者個別送信
+// ==============================
+async function submitResident(name) {
+  const key = safeName(name);
+
+  // 基本情報チェック
+  const date = document.getElementById('input-date').value;
+  const staffName = document.getElementById('input-staff-name').value.trim();
+  if (!date || !staffName || !state.selectedHome || !state.timeSlot) {
+    showToast('日付・担当職員名・住居・時間帯を先に入力してください', 'error');
+    document.getElementById('input-date')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const slot = state.timeSlot;
+
+  // 職員食事チェック（早朝・日中）
+  if ((slot === '早朝' || slot === '日中') && !state.staffMeal) {
+    showToast('職員食事を選択してください', 'error');
+    document.getElementById('group-staff-meal')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  // 勤務体系チェック（日中）
+  if (slot === '日中' && !document.getElementById('input-kinmu').value) {
+    showToast('勤務体系を選択してください', 'error');
+    document.getElementById('input-kinmu')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  const d = state.residentData[key] || {};
+
+  // 利用の有無チェック
+  if (!d.riyou) {
+    const errEl = document.getElementById(`error-riyou-${key}`);
+    if (errEl) errEl.classList.add('visible');
+    showToast(`${name}さんの利用の有無を選択してください`, 'error');
+    errEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  // 食事項目チェック
+  let foodErr = false;
+  if (slot === '早朝') {
+    if (!d.shokuji)       { document.getElementById(`error-shokuji-${key}`)?.classList.add('visible');       foodErr = true; }
+    if (!d.chushokuJunbi) { document.getElementById(`error-chushokuJunbi-${key}`)?.classList.add('visible'); foodErr = true; }
+  }
+  if (slot === '日中' && !d.shokuji) {
+    document.getElementById(`error-shokuji-${key}`)?.classList.add('visible');
+    foodErr = true;
+  }
+  if (foodErr) {
+    showToast(`${name}さんの未入力項目があります`, 'error');
+    document.querySelector('.field-error.visible')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+
+  // 二重送信ガード
+  const batchKey = `${date}_${slot}_${key}`;
+  if (state.submittedResidents.has(batchKey)) {
+    showToast(`${name}さんはすでに送信済みです`, 'info');
+    return;
+  }
+
+  const btn = document.getElementById(`btn-resident-${key}`);
+  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
+
+  const kinmu  = document.getElementById('input-kinmu').value;
+  const now    = new Date().toLocaleString('ja-JP');
+  const row    = [
+    now, date, state.selectedHome, name, slot, staffName,
+    kinmu || '',
+    state.staffMeal || '',
+    d.riyou || '',
+    d.ijo || '',
+    d.taichoJikan || '',
+    d.taichoHoho || '',
+    d.shien || '',
+    [d.shokuji, d.shokujiNaiyo].filter(Boolean).join('\n'),
+    [d.chushokuJunbi, d.chushokuNaiyo].filter(Boolean).join('\n'),
+    d.katsudo || '',
+    d.renkei || '',
+    d.gaihaku || '',
+    d.yakanShien || '',
+    d.junkai || '',
+    d.biko || '',
+    d.taijo || '',
+  ];
+
+  try {
+    await appendRowToExcel(row);
+    state.submittedResidents.add(batchKey);
+    markResidentSubmitted(key, name);
+    showToast(`${name}さんの記録を送信しました`, 'success');
+  } catch (err) {
+    console.error(err);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> この方を送信する';
+    }
+    showToast('送信エラー: ' + err.message, 'error');
+  }
+}
+
+function markResidentSubmitted(key, name) {
+  const block = document.getElementById(`block-${key}`);
+  const btn   = document.getElementById(`btn-resident-${key}`);
+  const badge = document.getElementById(`badge-${key}`);
+
+  if (btn) {
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> 送信済み';
+    btn.disabled = true;
+    btn.style.background = '#9e9e9e';
+  }
+  if (badge) {
+    badge.textContent  = '送信済み';
+    badge.style.background = 'var(--success)';
+    badge.style.color  = 'white';
+  }
+  if (block) block.classList.add('submitted');
 }
 
 function goToNextEntry() {

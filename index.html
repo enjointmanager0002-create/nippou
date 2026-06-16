@@ -1428,7 +1428,7 @@ async function appendRowFallback(rowData) {
   const used = await callGraph(
     `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/usedRange`
   );
-  const nextRow = (used.rowCount || 1) + 1;
+  const nextRow = (used.rowIndex || 0) + (used.rowCount || 1) + 1;
   const colEnd = String.fromCharCode(64 + rowData.length);
   await callGraph(
     `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${nextRow}:${colEnd}${nextRow}')`,
@@ -1868,6 +1868,7 @@ function initForm() {
   state.staffMeal = null;
   state.selectedHome = null;
   state.residentData = {};
+  invalidateDupCache();
 
   document.querySelectorAll('.time-slot-btn').forEach(b => b.classList.remove('active'));
   document.querySelectorAll('.toggle-btn').forEach(b => b.className = 'toggle-btn');
@@ -2439,6 +2440,10 @@ async function submitForm() {
   try {
     const now = new Date().toLocaleString('ja-JP');
     let savedCount = 0;
+    let dupSkipped = [];
+
+    // 重複チェック用に現在のExcelデータを一括取得
+    const existingRows = await fetchRowsForDupCheck();
 
     for (const r of residents) {
       const name = typeof r === 'string' ? r : r.name;
@@ -2456,38 +2461,57 @@ async function submitForm() {
         continue;
       }
 
-      // Build row matching CONFIG.headers
-      // ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系',
-      //  '職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容',
-      //  '食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考','体調']
+      // 重複チェック: 同一利用者・同日・同時間帯のデータが既に存在するか確認
+      const dup = existingRows.find(row =>
+        String(row.values[VH['利用者名']]) === name &&
+        _toDateStr(row.values[VH['報告日']]) === date &&
+        String(row.values[VH['時間帯']]) === state.timeSlot
+      );
+      if (dup) {
+        dupSkipped.push(name);
+        continue;
+      }
+
       const row = [
-        now,                          // 送信日時
-        date,                         // 報告日
-        homeName,                     // ホーム名
-        name,                         // 利用者名
-        state.timeSlot,               // 時間帯
-        staffName,                    // 担当職員名
-        kinmu || '',                  // 勤務体系
-        state.staffMeal || '',        // 職員食事
-        d.riyou || '',                // 利用の有無
-        d.ijo || '',                  // 異常の有無
-        d.taichoJikan || '',          // 体調確認時間
-        d.taichoHoho || '',           // 体調確認方法
-        d.shien || '',                // 支援内容
-        [d.shokuji, d.shokujiNaiyo].filter(Boolean).join('\n'),   // 食事内容
-        [d.chushokuJunbi, d.chushokuNaiyo].filter(Boolean).join('\n'), // 昼食準備（早朝のみ）
-        d.katsudo || '',              // 活動内容（日中のみ）
-        d.renkei || '',               // 連携及び調整（日中のみ）
-        d.gaihaku || '',              // 外泊（夜間のみ）
-        d.yakanShien || '',           // 夜間支援（夜間のみ）
-        d.junkai || '',               // 巡回時間（夜間のみ）
-        d.biko || '',                 // 備考
-        d.taijo || '',                // 体調（早朝・日中のみ）
+        now,
+        date,
+        homeName,
+        name,
+        state.timeSlot,
+        staffName,
+        kinmu || '',
+        state.staffMeal || '',
+        d.riyou || '',
+        d.ijo || '',
+        d.taichoJikan || '',
+        d.taichoHoho || '',
+        d.shien || '',
+        [d.shokuji, d.shokujiNaiyo].filter(Boolean).join('\n'),
+        [d.chushokuJunbi, d.chushokuNaiyo].filter(Boolean).join('\n'),
+        d.katsudo || '',
+        d.renkei || '',
+        d.gaihaku || '',
+        d.yakanShien || '',
+        d.junkai || '',
+        d.biko || '',
+        d.taijo || '',
       ];
 
       await appendRowToExcel(row);
-      state.submittedResidents.add(batchKey); // 送信成功したらマーク
+      invalidateDupCache();
+      state.submittedResidents.add(batchKey);
       savedCount++;
+    }
+
+    // 重複によりスキップした利用者がいれば通知
+    if (dupSkipped.length > 0) {
+      showToast(`${dupSkipped.join('、')}さんはすでに記録が存在するためスキップしました。修正は記録一覧の「編集」からどうぞ。`, 'error');
+    }
+
+    // 送信できた利用者が0名（全員重複スキップ）なら成功画面に遷移しない
+    if (savedCount === 0) {
+      showScreen('main');
+      return;
     }
 
     // 送信成功 → データをクリアして再送信を防止
@@ -2573,7 +2597,7 @@ async function submitResident(name) {
   }
 
   const btn = document.getElementById(`btn-resident-${key}`);
-  if (btn) { btn.disabled = true; btn.textContent = '送信中...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '確認中...'; }
 
   const kinmu  = document.getElementById('input-kinmu').value;
   const now    = new Date().toLocaleString('ja-JP');
@@ -2597,17 +2621,44 @@ async function submitResident(name) {
     d.taijo || '',
   ];
 
+  const SEND_BTN_HTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> この方を送信する';
+
   try {
-    await appendRowToExcel(row);
-    state.submittedResidents.add(batchKey);
-    markResidentSubmitted(key, name);
-    showToast(`${name}さんの記録を送信しました`, 'success');
+    // 重複チェック: 同一利用者・同日・同時間帯のデータが既に存在するか確認
+    const existingRows = await fetchRowsForDupCheck();
+    const dup = existingRows.find(r =>
+      String(r.values[VH['利用者名']]) === name &&
+      _toDateStr(r.values[VH['報告日']]) === date &&
+      String(r.values[VH['時間帯']]) === slot
+    );
+
+    if (dup) {
+      // 重複あり → 上書き確認ダイアログ
+      const overwrite = confirm(
+        `${name}さんの ${date}（${slot}）の記録はすでに存在します。\n\n上書きして修正しますか？\n（「キャンセル」すると記録一覧の「編集」ボタンから修正できます）`
+      );
+      if (!overwrite) {
+        if (btn) { btn.disabled = false; btn.innerHTML = SEND_BTN_HTML; }
+        return;
+      }
+      if (btn) btn.textContent = '保存中...';
+      await updateExcelRow(dup.excelRow, row);
+      invalidateDupCache();
+      state.submittedResidents.add(batchKey);
+      markResidentSubmitted(key, name);
+      showToast(`${name}さんの記録を上書き保存しました`, 'success');
+    } else {
+      // 新規登録
+      if (btn) btn.textContent = '送信中...';
+      await appendRowToExcel(row);
+      invalidateDupCache();
+      state.submittedResidents.add(batchKey);
+      markResidentSubmitted(key, name);
+      showToast(`${name}さんの記録を送信しました`, 'success');
+    }
   } catch (err) {
     console.error(err);
-    if (btn) {
-      btn.disabled = false;
-      btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg> この方を送信する';
-    }
+    if (btn) { btn.disabled = false; btn.innerHTML = SEND_BTN_HTML; }
     showToast('送信エラー: ' + err.message, 'error');
   }
 }
@@ -2738,8 +2789,19 @@ document.addEventListener('DOMContentLoaded', () => {
 const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考','体調'];
 const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
 let _viewerRows = [];
+let _dupCheckCache = null; // { rows, expiresAt } — submit画面での重複確認用キャッシュ
 
 // Excelがシリアル数値で返した日付を YYYY-MM-DD 文字列に変換
+// 重複チェック用: Excelの全行を30秒間キャッシュして返す
+async function fetchRowsForDupCheck() {
+  const now = Date.now();
+  if (_dupCheckCache && now < _dupCheckCache.expiresAt) return _dupCheckCache.rows;
+  const rows = await readExcelAllRows();
+  _dupCheckCache = { rows, expiresAt: now + 30000 };
+  return rows;
+}
+function invalidateDupCache() { _dupCheckCache = null; }
+
 function _toDateStr(v) {
   if (typeof v === 'number') {
     const d = new Date(Math.round((v - 25569) * 86400 * 1000));
@@ -2828,11 +2890,13 @@ async function readExcelAllRows() {
   const range = await callGraph(
     `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/usedRange`
   );
+  // rowIndex は usedRange の実際の開始行（0-based）。決め打ちせず取得する
+  const startRow = (range.rowIndex || 0) + 1; // 1-based Excel row
   const rows = [];
   for (let i = 1; i < range.values.length; i++) {
     const v = range.values[i];
     if (!v[1]) continue;
-    rows.push({ excelRow: i + 1, values: v });
+    rows.push({ excelRow: startRow + i, values: v });
   }
   return rows;
 }
@@ -3251,24 +3315,45 @@ function closeEditModal() {
 
 async function saveEditRecord() {
   const modal = document.getElementById('edit-modal');
-  const excelRow = parseInt(modal.dataset.excelRow);
-  const found = _viewerRows.find(r => r.excelRow === excelRow);
-  const original = found ? found.values : [];
+  const cachedExcelRow = parseInt(modal.dataset.excelRow);
+  const cached = _viewerRows.find(r => r.excelRow === cachedExcelRow);
+  const original = cached ? cached.values : [];
 
-  const editableKeys = ['報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事',
-    '利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備',
-    '活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考'];
-
+  // 編集内容を収集（モーダルを閉じる前に行う）
   const rowData = VIEWER_HEADERS.map((h, i) => {
-    if (h === '送信日時') return original[i] || '';
+    if (h === '送信日時') return original[i] ?? '';
     const el = document.getElementById(`ef-${h}`);
-    return el ? el.value : (original[i] || '');
+    return el ? el.value : (original[i] ?? '');
   });
 
   closeEditModal();
   setLoading('保存中...');
+
   try {
-    await updateExcelRow(excelRow, rowData);
+    // 保存直前にシートを再読み込みして正確な行番号を取得
+    // （他スタッフの送信によるキャッシュズレを防ぐ）
+    const freshRows = await readExcelAllRows();
+
+    // 送信日時・利用者名・時間帯で該当行を特定（内容一致で正しい行を探す）
+    const sendTime   = String(original[VH['送信日時']]  || '');
+    const riyousha   = String(original[VH['利用者名']]  || '');
+    const jikantai   = String(original[VH['時間帯']]    || '');
+
+    const match = freshRows.find(r =>
+      String(r.values[VH['送信日時']]) === sendTime &&
+      String(r.values[VH['利用者名']]) === riyousha &&
+      String(r.values[VH['時間帯']])   === jikantai
+    );
+
+    if (!match) {
+      showToast('編集対象のデータが見つかりません。再検索してください。', 'error');
+      showScreen('viewer');
+      return;
+    }
+
+    await updateExcelRow(match.excelRow, rowData);
+    // キャッシュも更新
+    _viewerRows = freshRows;
     showToast('保存しました', 'success');
     showScreen('viewer');
     await searchRecords();

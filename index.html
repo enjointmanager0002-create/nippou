@@ -1166,14 +1166,21 @@ class MinimalAuth {
   }
 
   _store(data) {
-    const seg = (data.id_token || '..').split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
-    const pay = JSON.parse(decodeURIComponent(atob(seg).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
+    // Keep existing account if refresh response omits id_token
+    let account = this._cache()?.account || { name: 'User', username: '' };
+    if (data.id_token) {
+      try {
+        const seg = data.id_token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+        const pay = JSON.parse(decodeURIComponent(atob(seg).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
+        account = { name: pay.name || pay.preferred_username || 'User', username: pay.preferred_username || pay.email || '' };
+      } catch {}
+    }
     localStorage.setItem('_auth', JSON.stringify({
       v: 2,
       accessToken: data.access_token,
-      refreshToken: data.refresh_token,
+      refreshToken: data.refresh_token || this._cache()?.refreshToken,
       exp: Date.now() + data.expires_in * 1000,
-      account: { name: pay.name || pay.preferred_username || 'User', username: pay.preferred_username || pay.email || '' }
+      account
     }));
   }
 
@@ -1255,7 +1262,10 @@ async function afterLogin() {
     loadSettingsFromCloud().then(() => {
       loadSettings();
       initForm();
-    }).catch(() => {});
+      checkAndOfferDraftRestore();
+    }).catch(() => {
+      checkAndOfferDraftRestore();
+    });
   } catch (err) {
     console.error(err);
     showScreen('login');
@@ -1268,22 +1278,29 @@ async function afterLogin() {
 // ==============================
 async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {}) {
   state.token = await getToken();
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 30000); // 30秒でタイムアウト
   const headers = {
     'Authorization': `Bearer ${state.token}`,
     'Content-Type': 'application/json',
     ...extraHeaders
   };
-  const opts = { method, headers };
+  const opts = { method, headers, signal: ctrl.signal };
   if (body) opts.body = typeof body === 'string' ? body : JSON.stringify(body);
-
-  const res = await fetch('https://graph.microsoft.com/v1.0' + endpoint, opts);
-
-  if (res.status === 204) return null;
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Graph API エラー (${res.status}): ${errText}`);
+  try {
+    const res = await fetch('https://graph.microsoft.com/v1.0' + endpoint, opts);
+    clearTimeout(tid);
+    if (res.status === 204) return null;
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Graph API エラー (${res.status}): ${errText}`);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(tid);
+    if (err.name === 'AbortError') throw new Error('通信がタイムアウトしました（30秒）。ネットワーク接続を確認してから再送信してください。');
+    throw err;
   }
-  return res.json();
 }
 
 async function callGraphBinary(endpoint, method, data) {
@@ -1888,6 +1905,7 @@ function initForm() {
 function selectHome(name) {
   state.selectedHome = name || null;
   state.residentData = {};
+  clearDraft();
   renderResidents();
   populateStaffDropdown('');
   updateSubmitState();
@@ -1896,6 +1914,7 @@ function selectHome(name) {
 function selectTimeSlot(slot) {
   state.timeSlot = slot;
   state.residentData = {};
+  clearDraft();
 
   document.querySelectorAll('.time-slot-btn').forEach(b => {
     const name = b.querySelector('.slot-name').textContent;
@@ -2001,20 +2020,23 @@ const KINMU_NICCHU     = ['夕朝勤(14:00-翌9:00)','夕朝勤(15:00-翌9:00)',
 const KINMU_YAKAN      = ['S夜勤(21:00-翌9:00)','S夜勤(22:00-翌9:00)','その他'];
 
 function shienChips(key) {
+  const saved = new Set((state.residentData[key]?.shien || '').split('、').filter(Boolean));
   return `<div class="chip-group">${SHIEN_OPTIONS.map(o =>
-    `<button class="chip-btn" onclick="toggleShienChip('${key}','${o}',this)">${o}</button>`
+    `<button class="chip-btn ${saved.has(o) ? 'chip-active' : ''}" onclick="toggleShienChip('${key}','${o}',this)">${o}</button>`
   ).join('')}</div>`;
 }
 
 function foodToggle(key, field, errorId) {
+  const saved = state.residentData[key]?.[field] || '';
   return `<div class="toggle-group">${FOOD_OPTIONS.map(o =>
-    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this);${errorId ? `clearError('${errorId}')` : ''}">${o}</button>`
+    `<button class="toggle-btn ${saved === o ? 'active' : ''}" onclick="setFood('${key}','${field}','${o}',this);${errorId ? `clearError('${errorId}')` : ''}">${o}</button>`
   ).join('')}</div>`;
 }
 
 function yushokuToggle(key, field, errorId) {
+  const saved = state.residentData[key]?.[field] || '';
   return `<div class="toggle-group">${YUSHOKU_OPTIONS.map(o =>
-    `<button class="toggle-btn" onclick="setFood('${key}','${field}','${o}',this);${errorId ? `clearError('${errorId}')` : ''}">${o}</button>`
+    `<button class="toggle-btn ${saved === o ? 'active' : ''}" onclick="setFood('${key}','${field}','${o}',this);${errorId ? `clearError('${errorId}')` : ''}">${o}</button>`
   ).join('')}</div>`;
 }
 
@@ -2034,6 +2056,7 @@ function toggleShienChip(key, value, el) {
   state.residentData[key].shien = Array.from(parts).join('、');
   updateResidentBadge(key);
   updateSubmitState();
+  saveDraft();
 }
 
 function toggleEditShienChip(el, value) {
@@ -2085,16 +2108,17 @@ function setFood(key, field, value, el) {
 function renderResidentForm(name) {
   const slot = state.timeSlot;
   const key = safeName(name);
+  const d = state.residentData[key] || {}; // ドラフト復元用
 
   const riyouField = `
     <div class="form-group">
       <label class="form-label">利用の有無<span class="required">*</span></label>
       <div class="toggle-group">
-        <button class="toggle-btn" id="toggle-riyou-${key}-有"
+        <button class="toggle-btn ${d.riyou === '有' ? 'active-yes' : ''}" id="toggle-riyou-${key}-有"
                 onclick="setResidentFieldAndToggle('${key}', 'riyou', '有'); updateResidentBadge('${key}'); clearError('error-riyou-${key}')">
           有（利用あり）
         </button>
-        <button class="toggle-btn" id="toggle-riyou-${key}-無"
+        <button class="toggle-btn ${d.riyou === '無' ? 'active-no' : ''}" id="toggle-riyou-${key}-無"
                 onclick="setResidentFieldAndToggle('${key}', 'riyou', '無'); updateResidentBadge('${key}'); clearError('error-riyou-${key}')">
           無（外泊等）
         </button>
@@ -2110,27 +2134,27 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">異常の有無</label>
         <div class="toggle-group">
-          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'ijo', '無'); updateResidentBadge('${key}')">無</button>
-          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'ijo', '有'); updateResidentBadge('${key}')">有</button>
+          <button class="toggle-btn ${d.ijo === '無' ? 'active-no' : ''}" id="toggle-ijo-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'ijo', '無'); updateResidentBadge('${key}')">無</button>
+          <button class="toggle-btn ${d.ijo === '有' ? 'active-yes' : ''}" id="toggle-ijo-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'ijo', '有'); updateResidentBadge('${key}')">有</button>
         </div>
       </div>
       <div class="form-group">
         <label class="form-label">体調確認時間</label>
-        <input type="time" class="form-input" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
+        <input type="time" class="form-input" value="${d.taichoJikan || ''}" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
       </div>
       <div class="form-group">
         <label class="form-label">体調確認方法</label>
         <select class="form-select" onchange="setResidentField('${key}', 'taichoHoho', this.value)">
           <option value="">選択してください</option>
-          <option value="様子から確認">様子から確認</option>
-          <option value="会話で確認">会話で確認</option>
+          <option value="様子から確認" ${d.taichoHoho === '様子から確認' ? 'selected' : ''}>様子から確認</option>
+          <option value="会話で確認" ${d.taichoHoho === '会話で確認' ? 'selected' : ''}>会話で確認</option>
         </select>
       </div>
       <div class="form-group">
         <label class="form-label">体調</label>
         <select class="form-select" onchange="setResidentField('${key}', 'taijo', this.value)">
           <option value="">選択してください</option>
-          ${TAIJO_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
+          ${TAIJO_OPTIONS.map(o => `<option value="${o}" ${d.taijo === o ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
       </div>
       <div class="section-divider">支援・食事</div>
@@ -2146,7 +2170,7 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">朝食内容</label>
         <textarea class="form-textarea" rows="2" placeholder="用意した朝食の内容を記入"
-                  oninput="setResidentField('${key}', 'shokujiNaiyo', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'shokujiNaiyo', this.value)">${escHtml(d.shokujiNaiyo || '')}</textarea>
       </div>
       <div class="form-group">
         <label class="form-label">昼食準備<span class="required">*</span></label>
@@ -2156,13 +2180,13 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">昼食内容</label>
         <textarea class="form-textarea" rows="2" placeholder="用意した昼食の内容を記入"
-                  oninput="setResidentField('${key}', 'chushokuNaiyo', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'chushokuNaiyo', this.value)">${escHtml(d.chushokuNaiyo || '')}</textarea>
       </div>
       <div class="form-group">
         <label class="form-label">備考（相談内容・支援内容等）</label>
         <textarea class="form-textarea" rows="3"
                   placeholder="身体拘束・苦情・事故等も記載"
-                  oninput="setResidentField('${key}', 'biko', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'biko', this.value)">${escHtml(d.biko || '')}</textarea>
       </div>
     `;
   }
@@ -2175,19 +2199,19 @@ function renderResidentForm(name) {
         <label class="form-label">活動内容</label>
         <select class="form-select" onchange="setResidentField('${key}', 'katsudo', this.value)">
           <option value="">選択してください</option>
-          ${KATSUDO_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
+          ${KATSUDO_OPTIONS.map(o => `<option value="${o}" ${d.katsudo === o ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
       </div>
       <div class="section-divider">体調確認</div>
       <div class="form-group">
         <label class="form-label">体調確認時間</label>
-        <input type="time" class="form-input" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
+        <input type="time" class="form-input" value="${d.taichoJikan || ''}" oninput="setResidentField('${key}', 'taichoJikan', this.value)">
       </div>
       <div class="form-group">
         <label class="form-label">体調</label>
         <select class="form-select" onchange="setResidentField('${key}', 'taijo', this.value)">
           <option value="">選択してください</option>
-          ${TAIJO_OPTIONS.map(o => `<option value="${o}">${o}</option>`).join('')}
+          ${TAIJO_OPTIONS.map(o => `<option value="${o}" ${d.taijo === o ? 'selected' : ''}>${o}</option>`).join('')}
         </select>
       </div>
       <div class="section-divider">支援・食事</div>
@@ -2203,18 +2227,18 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">夕食内容</label>
         <textarea class="form-textarea" rows="2" placeholder="用意した夕食の内容を記入"
-                  oninput="setResidentField('${key}', 'shokujiNaiyo', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'shokujiNaiyo', this.value)">${escHtml(d.shokujiNaiyo || '')}</textarea>
       </div>
       <div class="form-group">
         <label class="form-label">連携及び調整</label>
         <textarea class="form-textarea" placeholder="関係機関等との連携内容"
-                  oninput="setResidentField('${key}', 'renkei', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'renkei', this.value)">${escHtml(d.renkei || '')}</textarea>
       </div>
       <div class="form-group">
         <label class="form-label">備考（相談内容・支援内容等）</label>
         <textarea class="form-textarea" rows="3"
                   placeholder="身体拘束・苦情・事故等も記載"
-                  oninput="setResidentField('${key}', 'biko', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'biko', this.value)">${escHtml(d.biko || '')}</textarea>
       </div>
     `;
   }
@@ -2225,36 +2249,36 @@ function renderResidentForm(name) {
       <div class="form-group">
         <label class="form-label">外泊</label>
         <div class="toggle-group">
-          <button class="toggle-btn" id="toggle-gaihaku-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'gaihaku', '無')">無</button>
-          <button class="toggle-btn" id="toggle-gaihaku-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'gaihaku', '有')">有</button>
+          <button class="toggle-btn ${d.gaihaku === '無' ? 'active-no' : ''}" id="toggle-gaihaku-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'gaihaku', '無')">無</button>
+          <button class="toggle-btn ${d.gaihaku === '有' ? 'active-yes' : ''}" id="toggle-gaihaku-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'gaihaku', '有')">有</button>
         </div>
       </div>
       <div class="form-group">
         <label class="form-label">夜間支援</label>
         <select class="form-select" onchange="setResidentField('${key}', 'yakanShien', this.value)">
           <option value="">選択してください</option>
-          <option value="夜勤">夜勤</option>
-          <option value="当直">当直</option>
+          <option value="夜勤" ${d.yakanShien === '夜勤' ? 'selected' : ''}>夜勤</option>
+          <option value="当直" ${d.yakanShien === '当直' ? 'selected' : ''}>当直</option>
         </select>
       </div>
       <div class="section-divider">異常確認・状況</div>
       <div class="form-group">
         <label class="form-label">異常の有無</label>
         <div class="toggle-group">
-          <button class="toggle-btn" id="toggle-ijo-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'ijo', '無'); updateResidentBadge('${key}')">無</button>
-          <button class="toggle-btn" id="toggle-ijo-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'ijo', '有'); updateResidentBadge('${key}')">有</button>
+          <button class="toggle-btn ${d.ijo === '無' ? 'active-no' : ''}" id="toggle-ijo-${key}-無" onclick="setResidentFieldAndToggle('${key}', 'ijo', '無'); updateResidentBadge('${key}')">無</button>
+          <button class="toggle-btn ${d.ijo === '有' ? 'active-yes' : ''}" id="toggle-ijo-${key}-有" onclick="setResidentFieldAndToggle('${key}', 'ijo', '有'); updateResidentBadge('${key}')">有</button>
         </div>
       </div>
       <div class="form-group">
         <label class="form-label">巡回時間</label>
-        <input type="time" id="junkai-1-${key}" class="form-input"
+        <input type="time" id="junkai-1-${key}" class="form-input" value="${d.junkai || ''}"
                oninput="updateJunkai('${key}')">
       </div>
       <div class="form-group">
         <label class="form-label">備考（相談内容・支援内容等）</label>
         <textarea class="form-textarea" rows="3"
                   placeholder="身体拘束・苦情・事故等も記載"
-                  oninput="setResidentField('${key}', 'biko', this.value)"></textarea>
+                  oninput="setResidentField('${key}', 'biko', this.value)">${escHtml(d.biko || '')}</textarea>
       </div>
     `;
   }
@@ -2269,6 +2293,7 @@ function setResidentField(key, field, value) {
   if (!state.residentData[key]) state.residentData[key] = {};
   state.residentData[key][field] = value;
   updateSubmitState();
+  saveDraft();
 }
 
 function updateJunkai(key) {
@@ -2284,6 +2309,7 @@ function toggleSelect(group, value) {
     yesBtn.className = 'toggle-btn' + (value === '有' ? ' active-yes' : '');
     noBtn.className = 'toggle-btn' + (value === '無' ? ' active-no' : '');
     clearError('error-staff-meal');
+    saveDraft();
   }
 }
 
@@ -2517,6 +2543,7 @@ async function submitForm() {
     // 送信成功 → データをクリアして再送信を防止
     state.residentData = {};
     state.submittedResidents = new Set();
+    clearDraft();
 
     document.getElementById('success-detail').textContent =
       `${date}（${state.timeSlot}） / ${savedCount}名分の記録をOneDriveに保存しました`;
@@ -2792,6 +2819,124 @@ let _viewerRows = [];
 let _dupCheckCache = null; // { rows, expiresAt } — submit画面での重複確認用キャッシュ
 
 // Excelがシリアル数値で返した日付を YYYY-MM-DD 文字列に変換
+// ==============================
+// ドラフト自動保存（入力データの消失防止）
+// ==============================
+function saveDraft() {
+  const dateEl = document.getElementById('input-date');
+  const date = dateEl ? dateEl.value : '';
+  const today = new Date().toISOString().slice(0, 10);
+  if (!date || date !== today) return;
+  if (!state.timeSlot && !Object.keys(state.residentData || {}).length) return;
+  try {
+    localStorage.setItem('nippou_draft', JSON.stringify({
+      date,
+      staffName: document.getElementById('input-staff-name')?.value || '',
+      kinmu: document.getElementById('input-kinmu')?.value || '',
+      selectedHome: state.selectedHome,
+      timeSlot: state.timeSlot,
+      staffMeal: state.staffMeal,
+      residentData: state.residentData,
+      savedAt: Date.now(),
+    }));
+  } catch {}
+}
+
+function clearDraft() { localStorage.removeItem('nippou_draft'); }
+
+function checkAndOfferDraftRestore() {
+  const raw = localStorage.getItem('nippou_draft');
+  if (!raw) return;
+  let draft;
+  try { draft = JSON.parse(raw); } catch { clearDraft(); return; }
+  const age = Date.now() - (draft.savedAt || 0);
+  const today = new Date().toISOString().slice(0, 10);
+  if (age > 6 * 3600 * 1000 || draft.date !== today) { clearDraft(); return; }
+  const hasData = draft.timeSlot || Object.keys(draft.residentData || {}).length;
+  if (!hasData) return;
+  showDraftRestoreBanner(draft);
+}
+
+function showDraftRestoreBanner(draft) {
+  if (document.getElementById('draft-restore-banner')) return;
+  const label = [draft.selectedHome, draft.timeSlot].filter(Boolean).join(' / ');
+  const banner = document.createElement('div');
+  banner.id = 'draft-restore-banner';
+  banner.style.cssText = [
+    'position:fixed;bottom:76px;left:50%;transform:translateX(-50%)',
+    'width:calc(100% - 32px);max-width:480px',
+    'background:#1565c0;color:#fff;border-radius:12px',
+    'padding:12px 14px;box-shadow:0 4px 16px rgba(0,0,0,.3)',
+    'z-index:9999;display:flex;align-items:center;gap:10px;font-family:inherit',
+  ].join(';');
+  banner.innerHTML = `
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13px;font-weight:700;">入力途中のデータが残っています</div>
+      <div style="font-size:12px;opacity:.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label || '未送信データ'}</div>
+    </div>
+    <button onclick="restoreDraft()" style="background:#fff;color:#1565c0;border:none;border-radius:6px;padding:7px 12px;font-weight:700;cursor:pointer;font-size:13px;white-space:nowrap">再開</button>
+    <button onclick="discardDraft()" style="background:rgba(255,255,255,.18);color:#fff;border:none;border-radius:6px;padding:7px 10px;cursor:pointer;font-size:13px;white-space:nowrap">破棄</button>
+  `;
+  document.body.appendChild(banner);
+}
+
+function removeDraftBanner() {
+  document.getElementById('draft-restore-banner')?.remove();
+}
+
+function discardDraft() { clearDraft(); removeDraftBanner(); }
+
+function restoreDraft() {
+  const raw = localStorage.getItem('nippou_draft');
+  if (!raw) { removeDraftBanner(); return; }
+  let draft;
+  try { draft = JSON.parse(raw); } catch { clearDraft(); removeDraftBanner(); return; }
+  applyDraft(draft);
+  removeDraftBanner();
+  showToast('入力内容を復元しました', 'success');
+}
+
+function applyDraft(draft) {
+  // 状態を復元（residentDataは先にセットしてからrenderResidents）
+  state.residentData  = draft.residentData  || {};
+  state.selectedHome  = draft.selectedHome  || null;
+  state.timeSlot      = draft.timeSlot      || null;
+  state.staffMeal     = draft.staffMeal     || null;
+
+  if (draft.date)     document.getElementById('input-date').value = draft.date;
+  if (draft.staffName) document.getElementById('input-staff-name').value = draft.staffName;
+  if (draft.selectedHome) document.getElementById('input-home').value = draft.selectedHome;
+
+  // 時間帯ボタンの見た目
+  if (draft.timeSlot) {
+    document.querySelectorAll('.time-slot-btn').forEach(b => {
+      b.classList.toggle('active', b.querySelector('.slot-name')?.textContent === draft.timeSlot);
+    });
+    const needsKinmu = draft.timeSlot === '日中' || draft.timeSlot === '夜間';
+    document.getElementById('group-kinmu').classList.toggle('hidden', !needsKinmu);
+    if (needsKinmu) updateKinmuOptions(draft.timeSlot);
+    document.getElementById('label-kinmu').innerHTML =
+      draft.timeSlot === '日中' ? '勤務体系<span class="required">*</span>' : '勤務体系（S夜勤時）';
+    document.getElementById('group-staff-meal').classList.toggle('hidden', draft.timeSlot === '夜間');
+  }
+
+  if (draft.kinmu) document.getElementById('input-kinmu').value = draft.kinmu;
+
+  // 職員食事ボタンの見た目
+  if (draft.staffMeal) {
+    const y = document.getElementById('toggle-staff-meal-yes');
+    const n = document.getElementById('toggle-staff-meal-no');
+    if (y) y.className = 'toggle-btn' + (draft.staffMeal === '有' ? ' active-yes' : '');
+    if (n) n.className = 'toggle-btn' + (draft.staffMeal === '無' ? ' active-no' : '');
+  }
+
+  // 利用者フォームを再描画（renderResidentFormがstate.residentDataから事前入力）
+  renderResidents();
+  // バッジを復元データに合わせて更新
+  Object.keys(state.residentData).forEach(key => updateResidentBadge(key));
+  updateSubmitState();
+}
+
 // 重複チェック用: Excelの全行を30秒間キャッシュして返す
 async function fetchRowsForDupCheck() {
   const now = Date.now();

@@ -2817,6 +2817,7 @@ const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名'
 const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
 let _viewerRows = [];
 let _dupCheckCache = null; // { rows, expiresAt } — submit画面での重複確認用キャッシュ
+let _viewMode = 'list';   // 'list' | 'summary'
 
 // Excelがシリアル数値で返した日付を YYYY-MM-DD 文字列に変換
 // ==============================
@@ -2979,6 +2980,7 @@ function showViewer() {
   document.getElementById('viewer-to').value = today.toISOString().slice(0, 10);
   document.getElementById('viewer-results').innerHTML = '';
   document.getElementById('btn-print').style.display = 'none';
+  _viewMode = 'list';
   showScreen('viewer');
 }
 
@@ -3048,6 +3050,30 @@ async function readExcelAllRows() {
 
 function renderViewerResults(rows, container) {
   container.innerHTML = '';
+
+  // ビュー切り替えボタン
+  const toggleWrap = document.createElement('div');
+  toggleWrap.style.cssText = 'display:flex;gap:8px;margin-bottom:14px';
+  toggleWrap.innerHTML = `
+    <button id="btn-view-list" onclick="switchViewMode('list')"
+      style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;border:2px solid var(--primary);
+             background:${_viewMode==='list'?'var(--primary)':'#fff'};color:${_viewMode==='list'?'#fff':'var(--primary)'}">
+      一覧
+    </button>
+    <button id="btn-view-summary" onclick="switchViewMode('summary')"
+      style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;border:2px solid var(--primary);
+             background:${_viewMode==='summary'?'var(--primary)':'#fff'};color:${_viewMode==='summary'?'#fff':'var(--primary)'}">
+      サマリー
+    </button>
+  `;
+  container.appendChild(toggleWrap);
+
+  if (_viewMode === 'summary') {
+    renderSummaryGrid(rows, container);
+    return;
+  }
+
+  // --- 一覧モード（古い順） ---
   const slotOrder = { '早朝': 0, '日中': 1, '夜間': 2 };
   const groups = new Map();
   for (const row of rows) {
@@ -3065,7 +3091,7 @@ function renderViewerResults(rows, container) {
     groups.get(key).residents.push(row);
   }
   const sorted = [...groups.values()].sort((a, b) => {
-    if (b.date !== a.date) return b.date.localeCompare(a.date);
+    if (a.date !== b.date) return a.date.localeCompare(b.date); // 古い順
     return (slotOrder[a.slot] ?? 9) - (slotOrder[b.slot] ?? 9);
   });
   let lastDate = '';
@@ -3079,6 +3105,132 @@ function renderViewerResults(rows, container) {
     }
     container.appendChild(buildGroupCard(g));
   }
+}
+
+function switchViewMode(mode) {
+  _viewMode = mode;
+  const container = document.getElementById('viewer-results');
+  renderViewerResults(_printRows, container);
+}
+
+function renderSummaryGrid(rows, container) {
+  const from = document.getElementById('viewer-from').value;
+  const to   = document.getElementById('viewer-to').value;
+  const myName = state.account?.name || state.account?.username || '';
+
+  // 表示期間の全日付を生成
+  const days = [];
+  const cur = new Date(from + 'T00:00:00');
+  const end = new Date(to   + 'T00:00:00');
+  while (cur <= end) {
+    days.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  // 住居フィルターに合わせた利用者リストを取得
+  const homeFilter = document.getElementById('viewer-home').value;
+  const { homes } = getSettings();
+  let residents = [];
+  if (homeFilter) {
+    const h = homes.find(hm => hm.name === homeFilter);
+    if (h) residents = (h.residents || []).map(r => typeof r === 'string' ? r : r.name).filter(Boolean);
+  }
+  if (!residents.length) {
+    residents = [...new Set(rows.map(r => String(r.values[VH['利用者名']] || '')).filter(Boolean))];
+  }
+
+  // 検索結果からルックアップテーブルを構築
+  // key: "date_slot_resident"  value: row
+  const lookup = {};
+  for (const row of rows) {
+    const date = _toDateStr(row.values[VH['報告日']]);
+    const slot = String(row.values[VH['時間帯']] || '');
+    const name = String(row.values[VH['利用者名']] || '');
+    if (date && slot && name) lookup[`${date}_${slot}_${name}`] = row;
+  }
+
+  const SLOTS      = ['早朝', '日中', '夜間'];
+  const SLOT_SHORT = { '早朝': '早', '日中': '日', '夜間': '夜' };
+  const SLOT_COLOR = { '早朝': '#e65100', '日中': '#2e7d32', '夜間': '#283593' };
+  const DOW        = ['日','月','火','水','木','金','土'];
+
+  // ヘッダー行（日付）
+  const dayHeaders = days.map(d => {
+    const dt  = new Date(d + 'T00:00:00');
+    const dow = DOW[dt.getDay()];
+    const num = dt.getDate();
+    const wkend = dt.getDay() === 0 || dt.getDay() === 6;
+    return `<th style="min-width:28px;text-align:center;padding:3px 2px;font-size:11px;background:#f5f5f5;font-weight:600;${wkend?'color:#c62828':''}">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
+  }).join('');
+
+  // テーブル本体
+  let tbody = '';
+  for (const residentName of residents) {
+    for (let si = 0; si < SLOTS.length; si++) {
+      const slot  = SLOTS[si];
+      const sc    = SLOT_COLOR[slot];
+      const isLast = si === SLOTS.length - 1;
+
+      const cells = days.map(date => {
+        const key = `${date}_${slot}_${residentName}`;
+        const row = lookup[key];
+        if (!row) return `<td style="text-align:center;color:#ccc;font-size:12px;padding:3px 2px;border-right:1px solid #eee">-</td>`;
+
+        const riyou  = String(row.values[VH['利用の有無']] || '');
+        const shokuji = String(row.values[VH['食事内容']] || '');
+        const staff  = String(row.values[VH['担当職員名']] || '');
+        const isSelf = staff === myName;
+
+        // ◯ 色: 自分=緑、他=青
+        const col   = isSelf ? '#2e7d32' : '#1565c0';
+        const title = `${staff}が入力`;
+
+        // 食事提供あり → ●、外泊 → 外、利用あり → ◯
+        let mark = '◯';
+        if (riyou === '無') mark = '<span style="font-size:10px">外</span>';
+        else if (shokuji) mark = '●';
+
+        return `<td style="text-align:center;font-size:14px;color:${col};font-weight:700;padding:3px 2px;border-right:1px solid #eee" title="${escHtml(title)}">${mark}</td>`;
+      }).join('');
+
+      // 利用者名セル（3行分をrowspanで結合）
+      const nameCell = si === 0
+        ? `<td rowspan="3" style="position:sticky;left:0;z-index:1;background:#fff;font-size:12px;font-weight:700;padding:4px 6px;border-right:2px solid #ddd;min-width:68px;max-width:80px;word-break:break-all;vertical-align:middle;border-bottom:2px solid #ccc">${escHtml(residentName)}</td>`
+        : '';
+      const slotCell = `<td style="font-size:11px;font-weight:700;color:${sc};padding:3px 4px;border-right:1px solid #ddd;white-space:nowrap">${SLOT_SHORT[slot]}</td>`;
+      const rowBorder = isLast ? 'border-bottom:2px solid #ccc;' : '';
+      tbody += `<tr style="${rowBorder}">${nameCell}${slotCell}${cells}</tr>`;
+    }
+  }
+
+  // 凡例
+  const legend = document.createElement('div');
+  legend.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#555;margin-bottom:10px;padding:10px 12px;background:#f8f9fa;border-radius:8px';
+  legend.innerHTML = `
+    <span><b style="color:#2e7d32">◯/●</b> 自分が入力</span>
+    <span><b style="color:#1565c0">◯/●</b> 他の職員が入力</span>
+    <span><b>●</b> 食事提供あり</span>
+    <span style="color:#777"><b>外</b> 外泊等</span>
+    <span style="color:#ccc"><b>-</b> 記録なし</span>
+  `;
+  container.appendChild(legend);
+
+  // テーブル本体
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:8px';
+  wrap.innerHTML = `
+    <table style="border-collapse:collapse;white-space:nowrap;font-family:inherit">
+      <thead>
+        <tr>
+          <th style="position:sticky;left:0;z-index:2;background:#f5f5f5;min-width:68px;padding:5px 6px;font-size:12px;border-right:2px solid #ddd;border-bottom:2px solid #bbb">利用者</th>
+          <th style="min-width:18px;background:#f5f5f5;font-size:10px;padding:3px 4px;border-right:1px solid #ddd;border-bottom:2px solid #bbb">帯</th>
+          ${dayHeaders}
+        </tr>
+      </thead>
+      <tbody>${tbody}</tbody>
+    </table>
+  `;
+  container.appendChild(wrap);
 }
 
 function formatDateJP(d) {

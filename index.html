@@ -3174,23 +3174,27 @@ function renderSummaryGrid(rows, container) {
       const cells = days.map(date => {
         const key = `${date}_${slot}_${residentName}`;
         const row = lookup[key];
-        if (!row) return `<td style="text-align:center;color:#ccc;font-size:12px;padding:3px 2px;border-right:1px solid #eee">-</td>`;
 
-        const riyou  = String(row.values[VH['利用の有無']] || '');
-        const shokuji = String(row.values[VH['食事内容']] || '');
-        const staff  = String(row.values[VH['担当職員名']] || '');
-        const isSelf = staff === myName;
+        // 記録なし → ×
+        if (!row) return `<td style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5">✕</td>`;
 
-        // ◯ 色: 自分=緑、他=青
-        const col   = isSelf ? '#2e7d32' : '#1565c0';
-        const title = `${staff}が入力`;
+        const riyou   = String(row.values[VH['利用の有無']] || '');
+        const shokuji = String(row.values[VH['食事内容']]   || '');
+        const staff   = String(row.values[VH['担当職員名']] || '');
 
-        // 食事提供あり → ●、外泊 → 外、利用あり → ◯
-        let mark = '◯';
-        if (riyou === '無') mark = '<span style="font-size:10px">外</span>';
-        else if (shokuji) mark = '●';
+        // 完全性チェック
+        // ・利用の有無が未入力 → ×
+        // ・利用あり かつ 夜間以外 → 食事内容も必須
+        // ・外泊等（無）または夜間 → 食事不要
+        const riyouOk   = riyou !== '';
+        const shokujiOk = riyou === '無' || slot === '夜間' || shokuji !== '';
+        const complete  = riyouOk && shokujiOk;
 
-        return `<td style="text-align:center;font-size:14px;color:${col};font-weight:700;padding:3px 2px;border-right:1px solid #eee" title="${escHtml(title)}">${mark}</td>`;
+        if (complete) {
+          return `<td style="text-align:center;font-size:15px;color:#1565c0;font-weight:700;padding:3px 2px;border-right:1px solid #eee" title="${escHtml(staff)}が入力">◯</td>`;
+        } else {
+          return `<td style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5" title="${escHtml(staff)}が入力（記録不十分）">✕</td>`;
+        }
       }).join('');
 
       // 利用者名セル（3行分をrowspanで結合）
@@ -3207,11 +3211,8 @@ function renderSummaryGrid(rows, container) {
   const legend = document.createElement('div');
   legend.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#555;margin-bottom:10px;padding:10px 12px;background:#f8f9fa;border-radius:8px';
   legend.innerHTML = `
-    <span><b style="color:#2e7d32">◯/●</b> 自分が入力</span>
-    <span><b style="color:#1565c0">◯/●</b> 他の職員が入力</span>
-    <span><b>●</b> 食事提供あり</span>
-    <span style="color:#777"><b>外</b> 外泊等</span>
-    <span style="color:#ccc"><b>-</b> 記録なし</span>
+    <span><b style="color:#1565c0;font-size:15px">◯</b> 記録完全（利用の有無・食事記録あり）</span>
+    <span><b style="color:#c62828">✕</b> 記録なし または 記録不十分</span>
   `;
   container.appendChild(legend);
 

@@ -3127,15 +3127,23 @@ function renderSummaryGrid(rows, container) {
     cur.setDate(cur.getDate() + 1);
   }
 
-  // 住居フィルターに合わせた利用者リストを取得
-  const homeFilter = document.getElementById('viewer-home').value;
+  // 利用者リストを決定（利用者フィルター > 住居フィルター > 検索結果の順で優先）
+  const homeFilter     = document.getElementById('viewer-home').value;
+  const residentFilter = document.getElementById('viewer-resident').value;
   const { homes } = getSettings();
   let residents = [];
-  if (homeFilter) {
+
+  if (residentFilter) {
+    // 特定の利用者が選択されている場合はその1人だけ
+    residents = [residentFilter];
+  } else if (homeFilter) {
+    // 住居が選択されている場合は設定の利用者リストを使用
     const h = homes.find(hm => hm.name === homeFilter);
     if (h) residents = (h.residents || []).map(r => typeof r === 'string' ? r : r.name).filter(Boolean);
   }
+
   if (!residents.length) {
+    // フィルターなし → 検索結果に含まれる利用者のみ表示
     residents = [...new Set(rows.map(r => String(r.values[VH['利用者名']] || '')).filter(Boolean))];
   }
 

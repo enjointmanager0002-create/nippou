@@ -3153,13 +3153,21 @@ function renderSummaryGrid(rows, container) {
   }
 
   // 検索結果からルックアップテーブルを構築
-  // key: "date_slot_resident"  value: row
+  // key: "date_slot_resident"  value: row / dupSet: 重複キー
   const lookup = {};
+  const dupSet = new Set();
   for (const row of rows) {
     const date = _toDateStr(row.values[VH['報告日']]);
     const slot = String(row.values[VH['時間帯']] || '');
     const name = String(row.values[VH['利用者名']] || '');
-    if (date && slot && name) lookup[`${date}_${slot}_${name}`] = row;
+    if (date && slot && name) {
+      const key = `${date}_${slot}_${name}`;
+      if (lookup[key]) {
+        dupSet.add(key);
+      } else {
+        lookup[key] = row;
+      }
+    }
   }
 
   const SLOTS      = ['早朝', '日中', '夜間'];
@@ -3186,6 +3194,12 @@ function renderSummaryGrid(rows, container) {
 
       const cells = days.map(date => {
         const key = `${date}_${slot}_${residentName}`;
+
+        // 重複あり → ×（重複エラー）
+        if (dupSet.has(key)) {
+          return `<td style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fce4ec" title="記録が重複しています（2件以上）">✕</td>`;
+        }
+
         const row = lookup[key];
 
         // 記録なし → ×
@@ -3226,6 +3240,7 @@ function renderSummaryGrid(rows, container) {
   legend.innerHTML = `
     <span><b style="color:#1565c0;font-size:15px">◯</b> 記録完全（利用の有無・食事記録あり）</span>
     <span><b style="color:#c62828">✕</b> 記録なし または 記録不十分</span>
+    <span><b style="color:#c62828">✕</b><span style="background:#fce4ec;padding:1px 4px;border-radius:3px;margin-left:2px;font-size:11px">ピンク</span> 記録が重複（要削除）</span>
   `;
   container.appendChild(legend);
 

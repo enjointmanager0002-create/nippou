@@ -3118,12 +3118,17 @@ function renderSummaryGrid(rows, container) {
   const to   = document.getElementById('viewer-to').value;
   const myName = state.account?.name || state.account?.username || '';
 
-  // 表示期間の全日付を生成
+  // 表示期間の全日付を生成（toISOString()はUTC変換で日付がズレるためローカル日付で構築）
   const days = [];
-  const cur = new Date(from + 'T00:00:00');
-  const end = new Date(to   + 'T00:00:00');
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const cur = new Date(fy, fm - 1, fd);
+  const end = new Date(ty, tm - 1, td);
   while (cur <= end) {
-    days.push(cur.toISOString().slice(0, 10));
+    const y = cur.getFullYear();
+    const m = String(cur.getMonth() + 1).padStart(2, '0');
+    const d = String(cur.getDate()).padStart(2, '0');
+    days.push(`${y}-${m}-${d}`);
     cur.setDate(cur.getDate() + 1);
   }
 
@@ -3303,8 +3308,12 @@ function buildResidentCard(row) {
     <div class="record-resident-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
         <div style="font-weight:700;font-size:14px">${escHtml(String(v[VH['利用者名']] || ''))}</div>
-        <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px"
-                onclick="openEditModal(${row.excelRow})">編集</button>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px"
+                  onclick="openEditModal(${row.excelRow})">編集</button>
+          <button class="btn" style="width:auto;padding:5px 14px;font-size:12px;background:#c62828;color:#fff;border:none"
+                  onclick="deleteRecord(${row.excelRow})">削除</button>
+        </div>
       </div>
       ${fieldsHtml ? `<div class="record-field-grid">${fieldsHtml}</div>` : '<div style="font-size:13px;color:var(--text-muted);margin-top:4px">記録なし</div>'}
     </div>`;
@@ -3678,6 +3687,40 @@ async function updateExcelRow(excelRowNum, rowData) {
     'PATCH',
     { values: [rowData] }
   );
+}
+
+async function deleteExcelRow(excelRowNum) {
+  // テーブル内の0-based行インデックス（ヘッダー行=行1を除く）
+  const tableRowIndex = excelRowNum - 2;
+  await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/itemAt(index=${tableRowIndex})`,
+    'DELETE'
+  );
+}
+
+async function deleteRecord(excelRow) {
+  const found = _viewerRows.find(r => r.excelRow === excelRow);
+  if (!found) { showToast('削除データが見つかりません', 'error'); return; }
+  const v = found.values;
+  const name = String(v[VH['利用者名']] || '');
+  const date = _toDateStr(v[VH['報告日']]);
+  const slot = String(v[VH['時間帯']] || '');
+
+  const ok = confirm(`${name}さんの ${date}（${slot}）の記録を削除しますか？\nこの操作は取り消せません。`);
+  if (!ok) return;
+
+  try {
+    showToast('削除中...', 'info');
+    await deleteExcelRow(excelRow);
+    invalidateDupCache();
+    _viewerRows = _viewerRows.filter(r => r.excelRow !== excelRow);
+    _printRows  = _printRows.filter(r => r.excelRow !== excelRow);
+    const container = document.getElementById('viewer-results');
+    renderViewerResults(_printRows, container);
+    showToast(`${name}さんの記録を削除しました`, 'success');
+  } catch (err) {
+    showToast('削除エラー: ' + err.message, 'error');
+  }
 }
 
 </script>

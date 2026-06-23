@@ -3705,11 +3705,14 @@ async function updateExcelRow(excelRowNum, rowData) {
 }
 
 async function deleteExcelRow(excelRowNum) {
-  // テーブル内の0-based行インデックス（ヘッダー行=行1を除く）
-  const tableRowIndex = excelRowNum - 2;
+  // テーブルAPIではなくrange deleteを使用（絶対行番号を直接指定でき、オフセット計算不要）
+  const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
+  const sheetId = wsInfo.value[0].id;
+  const colEnd = String.fromCharCode(64 + VIEWER_HEADERS.length);
   await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/itemAt(index=${tableRowIndex})`,
-    'DELETE'
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${excelRowNum}:${colEnd}${excelRowNum}')/delete`,
+    'POST',
+    { shift: 'Up' }
   );
 }
 
@@ -3728,11 +3731,9 @@ async function deleteRecord(excelRow) {
     showToast('削除中...', 'info');
     await deleteExcelRow(excelRow);
     invalidateDupCache();
-    _viewerRows = _viewerRows.filter(r => r.excelRow !== excelRow);
-    _printRows  = _printRows.filter(r => r.excelRow !== excelRow);
-    const container = document.getElementById('viewer-results');
-    renderViewerResults(_printRows, container);
     showToast(`${name}さんの記録を削除しました`, 'success');
+    // 削除後は行番号がズレるため再検索して画面を刷新
+    await searchRecords();
   } catch (err) {
     showToast('削除エラー: ' + err.message, 'error');
   }

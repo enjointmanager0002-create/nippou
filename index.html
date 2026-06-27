@@ -966,6 +966,18 @@
       </div>
     </div>
 
+    <div class="card">
+      <div class="card-title">Claude API設定</div>
+      <p style="font-size:12px;color:#888;margin:0 0 10px">閲覧画面のAI要約機能を使うにはAPIキーを登録してください</p>
+      <div class="form-group" style="margin:0 0 10px">
+        <label class="form-label">APIキー</label>
+        <input type="password" id="settings-claude-apikey" class="form-input"
+               placeholder="sk-ant-..." autocomplete="off"
+               style="margin:0;font-family:monospace;font-size:13px;letter-spacing:0.5px">
+      </div>
+      <button class="btn btn-secondary" style="font-size:13px" onclick="saveClaudeApiKey()">APIキーを保存</button>
+    </div>
+
     <div class="btn-row" style="margin-top:8px">
       <button type="button" class="btn btn-primary" onclick="saveSettings()">保存して戻る</button>
     </div>
@@ -1029,6 +1041,7 @@
       <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
         <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="searchRecords()">検索する</button>
         <button class="btn btn-secondary" id="btn-print" style="flex:1;min-width:120px;display:none" onclick="printResults()">印刷する</button>
+        <button class="btn btn-secondary" id="btn-ai-summary" style="flex:1;min-width:120px;display:none" onclick="showAiSummary()">AI要約</button>
       </div>
     </div>
     <div id="viewer-results"></div>
@@ -3055,6 +3068,8 @@ function showScreen(name) {
     document.getElementById('settings-admin-section').style.display = unlocked ? 'block' : 'none';
     if (unlocked) loadSettings();
     updateExcelStatus(state.excelFileId ? '接続済み' : '未接続');
+    const keyEl = document.getElementById('settings-claude-apikey');
+    if (keyEl) keyEl.value = localStorage.getItem('nippou_claude_apikey') || '';
   }
 }
 
@@ -3334,6 +3349,7 @@ async function searchRecords() {
     }
     _printRows = filtered;
     document.getElementById('btn-print').style.display = 'block';
+    document.getElementById('btn-ai-summary').style.display = 'block';
     renderViewerResults(filtered, container);
   } catch (e) {
     container.innerHTML = `<div style="text-align:center;padding:32px;color:#c62828">読み込みエラー: ${escHtml(e.message)}</div>`;
@@ -5935,6 +5951,172 @@ async function generateSrExcel() {
 function _parseTeateAmount(typeStr) {
   const m = String(typeStr||'').match(/(\d{3,6})円/);
   return m ? parseInt(m[1]) : 5000;
+}
+
+// ==============================
+// CLAUDE API / AI要約
+// ==============================
+
+function saveClaudeApiKey() {
+  const key = (document.getElementById('settings-claude-apikey')?.value || '').trim();
+  if (key && !key.startsWith('sk-ant-')) {
+    showToast('APIキーの形式が正しくありません（sk-ant-で始まる値を入力してください）', 'error');
+    return;
+  }
+  if (key) {
+    localStorage.setItem('nippou_claude_apikey', key);
+    showToast('APIキーを保存しました', 'success');
+  } else {
+    localStorage.removeItem('nippou_claude_apikey');
+    showToast('APIキーを削除しました', 'success');
+  }
+}
+
+function _formatRowsForAi(rows) {
+  const slotOrder = { '早朝': 0, '日中': 1, '夜間': 2 };
+  const groups = new Map();
+  for (const row of rows) {
+    const v = row.values;
+    const date = _toDateStr(v[VH['報告日']]);
+    const slot = v[VH['時間帯']];
+    const home = v[VH['ホーム名']];
+    const key = `${date}__${slot}__${home}`;
+    if (!groups.has(key)) {
+      groups.set(key, { date, slot, home, staff: v[VH['担当職員名']], items: [] });
+    }
+    groups.get(key).items.push(v);
+  }
+  const sorted = [...groups.values()].sort((a, b) => {
+    if (a.date !== b.date) return a.date.localeCompare(b.date);
+    return (slotOrder[a.slot] ?? 9) - (slotOrder[b.slot] ?? 9);
+  });
+  const lines = [];
+  for (const g of sorted) {
+    lines.push(`\n【${g.date} ${g.slot} / ${g.home} / 担当:${g.staff}】`);
+    for (const v of g.items) {
+      const parts = [
+        `利用者:${v[VH['利用者名']] || ''}`,
+        `異常:${v[VH['異常の有無']] || ''}`,
+        `体調:${v[VH['体調']] || ''}`,
+        v[VH['支援内容']] ? `支援:${v[VH['支援内容']]}` : '',
+        v[VH['食事内容']] ? `食事:${v[VH['食事内容']]}` : '',
+        v[VH['活動内容']] ? `活動:${v[VH['活動内容']]}` : '',
+        v[VH['備考']] ? `備考:${v[VH['備考']]}` : '',
+      ].filter(Boolean);
+      lines.push('  ' + parts.join(' / '));
+    }
+  }
+  return lines.join('\n');
+}
+
+async function showAiSummary() {
+  const apiKey = localStorage.getItem('nippou_claude_apikey') || '';
+  if (!apiKey) {
+    showToast('設定画面でClaude APIキーを登録してください', 'error');
+    return;
+  }
+  if (!_printRows || !_printRows.length) {
+    showToast('先に検索を実行してください', 'error');
+    return;
+  }
+
+  const container = document.getElementById('viewer-results');
+  let panel = document.getElementById('ai-summary-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'ai-summary-panel';
+    panel.className = 'card';
+    panel.style.marginTop = '16px';
+    container.appendChild(panel);
+  }
+  panel.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <div class="card-title" style="margin:0">AI要約</div>
+      <button onclick="document.getElementById('ai-summary-panel').remove()"
+              style="background:none;border:none;cursor:pointer;font-size:20px;color:#aaa;line-height:1">×</button>
+    </div>
+    <div id="ai-summary-content" style="font-size:13px;line-height:1.8;color:var(--text);white-space:pre-wrap;word-break:break-word">
+      <span style="color:var(--text-muted);font-style:italic">考え中...</span>
+    </div>
+  `;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const from = document.getElementById('viewer-from').value;
+  const to   = document.getElementById('viewer-to').value;
+  const recordText = _formatRowsForAi(_printRows);
+
+  const prompt = `あなたは障害者グループホームの管理者・サービス管理責任者を支援するAIアシスタントです。
+以下は${from}〜${to}の支援記録データです。
+
+${recordText}
+
+上記の支援記録を以下の観点でまとめてください：
+1. 利用者ごとの体調・支援状況の要点
+2. 異常報告・特記事項のまとめ
+3. 今後フォローアップすべき点
+
+障害者支援の専門用語を適切に使いながら、管理者が把握すべき要点を簡潔に日本語でまとめてください。`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-8',
+        max_tokens: 2048,
+        thinking: { type: 'adaptive' },
+        stream: true,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (!res.ok) {
+      let msg = `APIエラー: ${res.status}`;
+      try { const j = await res.json(); msg = j.error?.message || msg; } catch {}
+      throw new Error(msg);
+    }
+
+    const contentEl = document.getElementById('ai-summary-content');
+    contentEl.textContent = '';
+    let accumulated = '';
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') break;
+        try {
+          const ev = JSON.parse(data);
+          if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+            accumulated += ev.delta.text;
+            contentEl.textContent = accumulated;
+          }
+        } catch {}
+      }
+    }
+
+    if (!accumulated.trim()) {
+      contentEl.innerHTML = '<span style="color:#c62828">要約を生成できませんでした。</span>';
+    }
+  } catch (e) {
+    const contentEl = document.getElementById('ai-summary-content');
+    if (contentEl) {
+      contentEl.innerHTML = `<span style="color:#c62828">エラー: ${escHtml(e.message)}</span>`;
+    }
+  }
 }
 
 </script>

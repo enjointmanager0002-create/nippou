@@ -699,7 +699,23 @@
       padding-bottom: 4px;
       border-bottom: 1px solid var(--border);
     }
+    .invoice-tabbt {
+      flex: 1;
+      padding: 10px 4px;
+      font-size: 12px;
+      border: none;
+      background: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+    .invoice-tabbt.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+      font-weight: 700;
+    }
   </style>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 </head>
 <body>
 
@@ -907,6 +923,12 @@
         <div class="card-title">人員実績表</div>
         <p style="font-size:12px;color:#888;margin:0 0 12px">管轄・月を選択して夜間従事者シフトと世話人勤務時間の一覧を表示します</p>
         <button class="btn btn-primary" onclick="showJininScreen()">人員実績表を表示する</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">請求書・社労士管理</div>
+        <p style="font-size:12px;color:#888;margin:0 0 12px">入居者への請求書CSV（freee形式）と社労士提出Excelシートを作成します</p>
+        <button class="btn btn-primary" onclick="showInvoiceScreen()">請求書・社労士管理を開く</button>
       </div>
 
     </div>
@@ -1128,7 +1150,10 @@
         </div>
       </div>
 
-      <button class="btn btn-primary" style="margin-top:16px" onclick="generateBudgetText()">定型文を生成する</button>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-secondary" style="flex:none;width:auto;padding:10px 16px;font-size:13px" onclick="saveBudgetSettings()">設定を保存する</button>
+        <button class="btn btn-primary" style="flex:1" onclick="generateBudgetText()">定型文を生成する</button>
+      </div>
     </div>
 
     <!-- 出力 -->
@@ -1171,7 +1196,110 @@
       </div>
       <button class="btn btn-primary" style="margin-top:4px" onclick="calcJinin()">表示する</button>
     </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">勤怠データ照合</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">
+        勤怠システムのCSV（日次勤怠レポート）をアップロードすると、日報データとの差異を赤でハイライトします。一度登録すれば保存されます。
+      </div>
+      <div id="attendance-stored-months" style="margin-bottom:10px"></div>
+      <label class="btn btn-secondary" style="width:auto;padding:6px 16px;font-size:12px;display:inline-block;cursor:pointer">
+        CSVをアップロード
+        <input type="file" accept=".csv" id="attendance-file-input" style="display:none" onchange="handleAttendanceCsvUpload(this)">
+      </label>
+    </div>
+
     <div id="jinin-result"></div>
+  </div>
+</div>
+
+<!-- INVOICE SCREEN -->
+<div id="screen-invoice" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">請求書・社労士管理</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+    </div>
+  </div>
+  <div style="padding:0">
+    <div style="display:flex;border-bottom:1px solid var(--border);background:#fff;position:sticky;top:56px;z-index:10">
+      <button id="invoice-tabbt-residents" class="invoice-tabbt active" onclick="showInvoiceTab('residents')">入居者情報</button>
+      <button id="invoice-tabbt-forms" class="invoice-tabbt" onclick="showInvoiceTab('forms')">Formsデータ</button>
+      <button id="invoice-tabbt-invoice" class="invoice-tabbt" onclick="showInvoiceTab('invoice')">請求書CSV</button>
+      <button id="invoice-tabbt-sr" class="invoice-tabbt" onclick="showInvoiceTab('sr')">社労士シート</button>
+    </div>
+
+    <!-- 入居者情報タブ -->
+    <div id="invoice-tab-residents" style="padding:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div style="font-size:14px;font-weight:700">入居者情報</div>
+        <button class="btn btn-primary" style="width:auto;padding:6px 16px;font-size:12px" onclick="editInvResident(null)">＋ 追加</button>
+      </div>
+      <div id="inv-residents-list"></div>
+    </div>
+
+    <!-- Formsデータタブ -->
+    <div id="invoice-tab-forms" class="hidden" style="padding:12px">
+      <div id="inv-forms-content"></div>
+    </div>
+
+    <!-- 請求書CSVタブ -->
+    <div id="invoice-tab-invoice" class="hidden" style="padding:12px">
+      <div class="card">
+        <div class="card-title">請求書CSV作成</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div><label class="form-label">対象月</label><input type="month" id="inv-csv-month" class="form-input" style="margin:0"></div>
+          <div><label class="form-label">請求書番号（開始）</label><input type="number" id="inv-csv-no" class="form-input" style="margin:0" placeholder="例:1715"></div>
+        </div>
+        <div style="margin-bottom:10px"><label class="form-label">件名テンプレート（一般住居）</label><input type="text" id="inv-csv-title" class="form-input" style="margin:0" placeholder="グループホームOne's place 利用料"></div>
+        <div style="margin-bottom:10px"><label class="form-label">件名テンプレート（サテライト）</label><input type="text" id="inv-csv-title-sat" class="form-input" style="margin:0" placeholder="One's place サテライト 利用料"></div>
+        <div style="margin-bottom:10px"><label class="form-label">備考（振込先情報）</label><textarea id="inv-csv-biko" class="form-input" rows="3" style="margin:0;resize:vertical"></textarea></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+          <div><label class="form-label">口座引落 振込先文言</label><input type="text" id="inv-csv-furikomi" class="form-input" style="margin:0"></div>
+          <div><label class="form-label">現金 振込先文言</label><input type="text" id="inv-csv-furikomi-cash" class="form-input" style="margin:0"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+          <div><label class="form-label">メール送付時のメモ</label><input type="text" id="inv-csv-memo-mail" class="form-input" style="margin:0"></div>
+          <div><label class="form-label">郵送時のメモ</label><input type="text" id="inv-csv-memo-post" class="form-input" style="margin:0"></div>
+        </div>
+        <button class="btn btn-primary" onclick="generateInvoiceCsv()">CSVを作成・ダウンロード</button>
+        <div id="inv-csv-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
+      </div>
+    </div>
+
+    <!-- 社労士シートタブ -->
+    <div id="invoice-tab-sr" class="hidden" style="padding:12px">
+      <div class="card">
+        <div class="card-title">社労士提出シート作成</div>
+        <div style="margin-bottom:12px"><label class="form-label">対象月</label><input type="month" id="inv-sr-month" class="form-input" style="margin:0;max-width:180px"></div>
+        <button class="btn btn-primary" style="margin-bottom:8px" onclick="generateSrExcel()">Excelを作成・ダウンロード</button>
+        <div id="inv-sr-status" style="font-size:12px;color:var(--text-muted)"></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">スタッフ順序設定</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">社労士から指定された順番で登録。個人コードと氏名をセットで入力してください。</div>
+        <div id="sr-staff-list" style="margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="addSrStaffRow()">＋ 追加</button>
+          <button class="btn btn-primary" style="width:auto;padding:6px 14px;font-size:12px" onclick="saveSrStaff()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- RESIDENT EDIT MODAL -->
+<div id="inv-resident-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;overflow-y:auto">
+  <div style="background:#fff;margin:20px auto;max-width:600px;border-radius:10px;padding:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:17px;font-weight:700" id="inv-modal-title">入居者情報</div>
+      <button onclick="document.getElementById('inv-resident-modal').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:#666">×</button>
+    </div>
+    <div id="inv-modal-body"></div>
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-primary" style="flex:1" onclick="saveInvResident()">保存</button>
+      <button class="btn btn-secondary" style="flex:1" onclick="document.getElementById('inv-resident-modal').style.display='none'">キャンセル</button>
+    </div>
   </div>
 </div>
 
@@ -4270,6 +4398,56 @@ function renderUsageDaysTable(days, residentObjects, lookup, homeName, year, mon
 // ==============================
 let _budgetCalc = null; // { refYear, refMonth, targetYear, targetMonth, homeName, totalCost, budget }
 
+function _getBudgetSettingsStore() {
+  return JSON.parse(localStorage.getItem('nippou_budget_settings') || '{}');
+}
+
+function _loadBudgetSettings(homeName) {
+  const saved = _getBudgetSettingsStore()[homeName];
+  if (!saved) return;
+  (saved.buyers || []).forEach((b, idx) => {
+    const i = idx + 1;
+    const nameEl  = document.getElementById(`budget-buyer-${i}`);
+    const ratioEl = document.getElementById(`budget-ratio-${i}`);
+    const cashEl  = document.getElementById(`budget-cash-${i}`);
+    if (nameEl && b.name) {
+      const exists = Array.from(nameEl.options).some(o => o.value === b.name);
+      if (exists) nameEl.value = b.name;
+    }
+    if (ratioEl && b.ratio !== undefined) ratioEl.value = b.ratio;
+    if (cashEl  && b.cash  !== undefined) cashEl.value  = b.cash;
+  });
+  const rv = document.getElementById('budget-reserve');
+  const rt = document.getElementById('budget-reserve-type');
+  const dc = document.getElementById('budget-daily-cash');
+  const dp = document.getElementById('budget-daily-prepaid');
+  if (rv && saved.reserve      !== undefined) rv.value = saved.reserve;
+  if (rt && saved.reserveType)               rt.value = saved.reserveType;
+  if (dc && saved.dailyCash    !== undefined) dc.value = saved.dailyCash;
+  if (dp && saved.dailyPrepaid !== undefined) dp.value = saved.dailyPrepaid;
+}
+
+function saveBudgetSettings() {
+  const homeName = _budgetCalc?.homeName;
+  if (!homeName) { showToast('先に食材費を計算してください', 'error'); return; }
+  const buyers = [1,2,3].map(i => ({
+    name:  document.getElementById(`budget-buyer-${i}`)?.value || '',
+    ratio: parseInt(document.getElementById(`budget-ratio-${i}`)?.value || '0') || 0,
+    cash:  parseInt(document.getElementById(`budget-cash-${i}`)?.value  || '0') || 0,
+  }));
+  const data = {
+    buyers,
+    reserve:      parseInt(document.getElementById('budget-reserve')?.value       || '0') || 0,
+    reserveType:  document.getElementById('budget-reserve-type')?.value            || '現金',
+    dailyCash:    parseInt(document.getElementById('budget-daily-cash')?.value    || '0') || 0,
+    dailyPrepaid: parseInt(document.getElementById('budget-daily-prepaid')?.value || '0') || 0,
+  };
+  const store = _getBudgetSettingsStore();
+  store[homeName] = data;
+  localStorage.setItem('nippou_budget_settings', JSON.stringify(store));
+  showToast(`${homeName}の配分設定を保存しました`, 'success');
+}
+
 function showBudgetScreen() {
   const { homes } = getSettings();
   const sel = document.getElementById('budget-home');
@@ -4388,11 +4566,15 @@ async function calcFoodBudget() {
       </table>
     `;
 
-    // 担当者セレクト生成
+    // 担当者セレクト生成（保存済みがあれば自動復元、なければデフォルト値）
     _buildBuyerRows(homeName);
-    document.getElementById('budget-reserve').value = 10000;
-    document.getElementById('budget-daily-cash').value = '';
-    document.getElementById('budget-daily-prepaid').value = 10000;
+    if (_getBudgetSettingsStore()[homeName]) {
+      _loadBudgetSettings(homeName);
+    } else {
+      document.getElementById('budget-reserve').value = 10000;
+      document.getElementById('budget-daily-cash').value = '';
+      document.getElementById('budget-daily-prepaid').value = 10000;
+    }
     document.getElementById('budget-settings-card').classList.remove('hidden');
     document.getElementById('budget-output-card').classList.add('hidden');
     updateBudgetPreview();
@@ -4581,6 +4763,136 @@ const KINMU_TO_SHIFT = {
 
 let _jininTsv = '';
 
+// ---- 勤怠データ照合 ----
+function _getAttendanceStore() {
+  return JSON.parse(localStorage.getItem('nippou_attendance_data') || '{}');
+}
+function _saveAttendanceStore(store) {
+  localStorage.setItem('nippou_attendance_data', JSON.stringify(store));
+}
+
+function _parseCsvLine(line) {
+  const cols = [];
+  let i = 0;
+  while (i <= line.length) {
+    if (i === line.length) { cols.push(''); break; }
+    if (line[i] === '"') {
+      let val = ''; i++;
+      while (i < line.length) {
+        if (line[i] === '"') { i++; if (line[i] === '"') { val += '"'; i++; } else break; }
+        else val += line[i++];
+      }
+      cols.push(val);
+      if (line[i] === ',') i++; else break;
+    } else {
+      let val = '';
+      while (i < line.length && line[i] !== ',') val += line[i++];
+      cols.push(val);
+      if (i < line.length) i++;
+    }
+  }
+  return cols;
+}
+
+function _parseAttendanceCsv(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return {};
+  const normName = s => s.replace(/[\s　]+/g, ' ').trim();
+  // 出勤開始時刻(時) → シフトコード
+  const OVERNIGHT_MAP = { 14:'夜A', 15:'夜B', 16:'夜C', 17:'遅A', 18:'遅B', 19:'遅C' };
+  const EVENING_MAP   = { 14:'夕A', 15:'夕B', 16:'夕C', 17:'夕D' };
+  const result = {};
+
+  for (let li = 1; li < lines.length; li++) {
+    const cols = _parseCsvLine(lines[li]);
+    if (cols.length < 10) continue;
+    const name      = normName(cols[1]);
+    const dateRaw   = cols[2].trim();          // "2026/06/01"
+    const startTime = cols[3].trim();          // "15:30" or ""
+    const endTime   = cols[4].trim().split(' ')[0]; // "09:00" (take first if multiple)
+    const pattern   = cols[9].trim();          // "南玉 夕朝 15時半"
+
+    if (!name || !dateRaw || !startTime) continue;
+    const dp = dateRaw.split('/');
+    if (dp.length !== 3) continue;
+    const isoDate   = `${dp[0]}-${dp[1].padStart(2,'0')}-${dp[2].padStart(2,'0')}`;
+    const yearMonth = isoDate.slice(0, 7);
+
+    const startHour = parseInt(startTime.split(':')[0], 10);
+    if (isNaN(startHour)) continue;
+
+    let isOvernight;
+    if (pattern.includes('夕朝')) {
+      isOvernight = true;
+    } else if (pattern.includes('夕勤')) {
+      isOvernight = false;
+    } else if (endTime && endTime.match(/^\d{2}:\d{2}$/)) {
+      isOvernight = endTime < startTime; // "09:00" < "15:30" → true
+    } else {
+      continue; // 判定不能
+    }
+
+    const shiftCode = isOvernight ? OVERNIGHT_MAP[startHour] : EVENING_MAP[startHour];
+    if (!shiftCode) continue;
+
+    if (!result[yearMonth]) result[yearMonth] = {};
+    result[yearMonth][`${name}_${isoDate}`] = shiftCode;
+  }
+  return result;
+}
+
+async function handleAttendanceCsvUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const buffer = await file.arrayBuffer();
+    const text = new TextDecoder('shift-jis').decode(buffer);
+    const parsed = _parseAttendanceCsv(text);
+    const months = Object.keys(parsed);
+    if (!months.length) { showToast('夜間シフトデータが見つかりませんでした', 'error'); return; }
+    const store = _getAttendanceStore();
+    for (const [ym, data] of Object.entries(parsed)) {
+      store[ym] = Object.assign({}, store[ym] || {}, data);
+    }
+    _saveAttendanceStore(store);
+    _renderAttendanceStoredMonths();
+    showToast(`勤怠データを登録しました（${months.map(m => { const [y,mo]=m.split('-'); return `${y}年${parseInt(mo)}月`; }).join('・')}）`, 'success');
+  } catch(e) {
+    showToast(`読み込みエラー: ${e.message}`, 'error');
+  }
+  input.value = '';
+}
+
+function deleteAttendanceData(yearMonth) {
+  const store = _getAttendanceStore();
+  delete store[yearMonth];
+  _saveAttendanceStore(store);
+  _renderAttendanceStoredMonths();
+  const [y, m] = yearMonth.split('-');
+  showToast(`${y}年${parseInt(m)}月の勤怠データを削除しました`, 'success');
+}
+
+function _renderAttendanceStoredMonths() {
+  const el = document.getElementById('attendance-stored-months');
+  if (!el) return;
+  const store = _getAttendanceStore();
+  const months = Object.keys(store).sort();
+  if (!months.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">登録済みデータなし</div>';
+    return;
+  }
+  el.innerHTML = months.map(ym => {
+    const [y, mo] = ym.split('-');
+    const cnt = Object.keys(store[ym]).length;
+    return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+      <span style="font-size:12px;font-weight:600">${y}年${parseInt(mo)}月分</span>
+      <span style="font-size:11px;color:var(--text-muted)">(${cnt}件)</span>
+      <button class="btn btn-secondary" style="width:auto;padding:2px 8px;font-size:11px;color:#c62828;border-color:#c62828"
+              onclick="deleteAttendanceData('${ym}')">削除</button>
+    </div>`;
+  }).join('');
+}
+
 function showJininScreen() {
   const now = new Date();
   document.getElementById('jinin-month').value =
@@ -4588,6 +4900,7 @@ function showJininScreen() {
   document.getElementById('jinin-result').innerHTML = '';
   _jininTsv = '';
   showScreen('jinin');
+  _renderAttendanceStoredMonths();
 }
 
 async function calcJinin() {
@@ -4597,14 +4910,14 @@ async function calcJinin() {
   if (!monthVal)     { showToast('対象月を選択してください', 'error'); return; }
 
   const [ty, tm] = monthVal.split('-').map(Number);
-  const homes    = JININ_JURISDICTIONS[jurisdiction];
-  const lastDay  = new Date(ty, tm, 0).getDate();
+  const jurisHomes = JININ_JURISDICTIONS[jurisdiction]; // 住居サフィックスなし
+  const lastDay    = new Date(ty, tm, 0).getDate();
 
   // 前月末日（初日のキャリーオーバー用）
   let pm = tm - 1, py = ty;
   if (pm === 0) { pm = 12; py--; }
-  const prevLastDay  = new Date(py, pm, 0).getDate();
-  const prevDateStr  = `${py}-${String(pm).padStart(2,'0')}-${String(prevLastDay).padStart(2,'0')}`;
+  const prevLastDay = new Date(py, pm, 0).getDate();
+  const prevDateStr = `${py}-${String(pm).padStart(2,'0')}-${String(prevLastDay).padStart(2,'0')}`;
 
   // 当月の日付リスト
   const dates = [];
@@ -4616,65 +4929,91 @@ async function calcJinin() {
     '<div style="color:var(--text-muted);padding:16px;font-size:13px">計算中...</div>';
 
   try {
-    const allRows = await readExcelAllRows();
+    const { staffNames } = getSettings();
+    const normH = s => String(s || '').replace(/住居$/, '').trim();
 
-    // 日中レコードから勤務体系を取得: key = "ホーム名_日付" → シフト名
-    const shiftLookup = {};
-    for (const row of allRows) {
-      const date  = _toDateStr(row.values[VH['報告日']]);
-      const home  = String(row.values[VH['ホーム名']] || '');
-      const slot  = String(row.values[VH['時間帯']] || '');
-      const shift = String(row.values[VH['勤務体系']] || '');
-      if (slot !== '日中') continue;
-      if (!homes.includes(home)) continue;
-      const shiftCode = KINMU_TO_SHIFT[shift] || (SHIFT_NAMES.includes(shift) ? shift : null);
-      if (!shiftCode) continue;
-      const key = `${home}_${date}`;
-      if (!shiftLookup[key]) shiftLookup[key] = shiftCode;
-    }
-
-    // 夜間従事者: home × date → シフト名 or null
-    const nightData = {};
-    for (const home of homes) {
-      nightData[home] = {};
-      for (const date of dates) {
-        nightData[home][date] = shiftLookup[`${home}_${date}`] || null;
+    // 管轄の住居に登録されているスタッフを取得（重複除去）
+    const staffList = [];
+    const seen = new Set();
+    for (const s of (staffNames || [])) {
+      if (!s.name || seen.has(s.name)) continue;
+      if ((s.homes || []).some(h => jurisHomes.includes(normH(h)))) {
+        staffList.push(s.name);
+        seen.add(s.name);
       }
     }
 
-    // 世話人時間: home × date → 前日翌日 + 当日当日
+    if (staffList.length === 0) {
+      document.getElementById('jinin-result').innerHTML =
+        '<div style="color:#c62828;padding:16px;font-size:13px">対象の住居に登録されているスタッフが見つかりませんでした。<br>設定画面でスタッフと住居の紐付けを確認してください。</div>';
+      return;
+    }
+
+    const allRows = await readExcelAllRows();
+
+    // 日中レコードから勤務体系を取得: key = "職員名_日付" → シフトコード
+    const shiftLookup = {};
+    for (const row of allRows) {
+      const date      = _toDateStr(row.values[VH['報告日']]);
+      const home      = normH(row.values[VH['ホーム名']]);
+      const slot      = String(row.values[VH['時間帯']] || '');
+      const rawShift  = String(row.values[VH['勤務体系']] || '');
+      const staffName = String(row.values[VH['担当職員名']] || '');
+      if (slot !== '日中') continue;
+      if (!jurisHomes.includes(home)) continue;
+      if (!seen.has(staffName)) continue;
+      const shiftCode = KINMU_TO_SHIFT[rawShift] || (SHIFT_NAMES.includes(rawShift) ? rawShift : null);
+      if (!shiftCode) continue;
+      const key = `${staffName}_${date}`;
+      if (!shiftLookup[key]) shiftLookup[key] = shiftCode;
+    }
+
+    // 夜間従事者: staff × date → シフトコード or null
+    const nightData = {};
+    for (const staff of staffList) {
+      nightData[staff] = {};
+      for (const date of dates) {
+        nightData[staff][date] = shiftLookup[`${staff}_${date}`] || null;
+      }
+    }
+
+    // 世話人時間: staff × date → 前日翌日 + 当日当日
     const sodaninHours = {};
-    for (const home of homes) {
-      sodaninHours[home] = {};
+    for (const staff of staffList) {
+      sodaninHours[staff] = {};
       for (let i = 0; i < dates.length; i++) {
         const date = dates[i];
         let prevNext = 0;
         if (i === 0) {
-          const ps = shiftLookup[`${home}_${prevDateStr}`] || null;
+          const ps = shiftLookup[`${staff}_${prevDateStr}`] || null;
           prevNext = ps ? (SHIFT_HOURS[ps].next) : 0;
         } else {
-          const ps = nightData[home][dates[i-1]];
+          const ps = nightData[staff][dates[i-1]];
           prevNext = ps ? (SHIFT_HOURS[ps].next) : 0;
         }
-        const cs = nightData[home][date];
+        const cs = nightData[staff][date];
         const curToday = cs ? (SHIFT_HOURS[cs].today) : 0;
-        sodaninHours[home][date] = prevNext + curToday;
+        sodaninHours[staff][date] = prevNext + curToday;
       }
     }
 
     // TSV生成
     const buildTsv = (label, getValue) => {
       const header = [label, ...dates.map((_, i) => String(i+1))].join('\t');
-      const rows = homes.map(h => [h, ...dates.map(d => getValue(h, d))].join('\t'));
+      const rows = staffList.map(s => [s, ...dates.map(d => getValue(s, d))].join('\t'));
       return [header, ...rows].join('\n');
     };
-    _jininTsv = buildTsv('夜間従事者', (h, d) => nightData[h][d] || '特')
+    _jininTsv = buildTsv('夜間従事者', (s, d) => nightData[s][d] || '×')
       + '\n\n'
-      + buildTsv('世話人', (h, d) => String(sodaninHours[h][d]));
+      + buildTsv('世話人', (s, d) => String(sodaninHours[s][d]));
+
+    // 勤怠照合データ読み込み
+    const ymKey = `${ty}-${String(tm).padStart(2,'0')}`;
+    const attendLookup = _getAttendanceStore()[ymKey] || {};
 
     // HTML描画
     document.getElementById('jinin-result').innerHTML =
-      _renderJininTables(homes, dates, nightData, sodaninHours, ty, tm);
+      _renderJininTables(staffList, dates, nightData, sodaninHours, ty, tm, attendLookup);
 
   } catch (err) {
     document.getElementById('jinin-result').innerHTML =
@@ -4682,33 +5021,48 @@ async function calcJinin() {
   }
 }
 
-function _renderJininTables(homes, dates, nightData, sodaninHours, year, month) {
-  const TH = 'padding:3px 5px;border:1px solid #bbb;background:#f5f5f5;font-size:10px;white-space:nowrap;text-align:center;min-width:22px';
-  const TD = 'padding:3px 4px;border:1px solid #e0e0e0;font-size:10px;text-align:center';
-  const TDL = 'padding:3px 6px;border:1px solid #bbb;font-size:11px;white-space:nowrap;font-weight:600;background:#fafafa';
+function _renderJininTables(staffList, dates, nightData, sodaninHours, year, month, attendLookup) {
+  const TH  = 'padding:3px 5px;border:1px solid #bbb;background:#f5f5f5;font-size:10px;white-space:nowrap;text-align:center;min-width:22px';
+  const TD  = 'padding:3px 4px;border:1px solid #e0e0e0;font-size:10px;text-align:center;vertical-align:middle';
+  const TDL = 'padding:3px 6px;border:1px solid #bbb;font-size:11px;white-space:nowrap;background:#fafafa';
+  const normName = s => s.replace(/[\s　]+/g, ' ').trim();
+  const hasAttend = attendLookup && Object.keys(attendLookup).length > 0;
 
   const dayHeaders = dates.map((_, i) => `<th style="${TH}">${i+1}</th>`).join('');
 
   // 夜間従事者テーブル行
   let nightRows = '';
-  for (const home of homes) {
+  for (const staff of staffList) {
+    const nstaff = normName(staff);
     const cells = dates.map(d => {
-      const s = nightData[home][d];
-      const color = s ? '' : 'color:#aaa;';
-      return `<td style="${TD};${color}">${s || '特'}</td>`;
+      const s = nightData[staff][d];
+      const aVal = hasAttend ? (attendLookup[`${nstaff}_${d}`] || null) : null;
+
+      if (aVal && s && aVal !== s) {
+        // 不一致：日報値を赤、勤怠値を下段に表示
+        return `<td style="${TD};background:#fff0f0;color:#c62828;font-weight:700">`
+          + `${escHtml(s)}<div style="font-size:9px;color:#e57373;line-height:1.1">${escHtml(aVal)}</div></td>`;
+      } else if (!s && aVal) {
+        // 日報になし・勤怠にあり
+        return `<td style="${TD};background:#fff8e1;color:#e65100;font-weight:700">`
+          + `×<div style="font-size:9px;color:#fb8c00;line-height:1.1">${escHtml(aVal)}</div></td>`;
+      } else {
+        const color = s ? '' : 'color:#ccc;';
+        return `<td style="${TD};${color}">${s || '×'}</td>`;
+      }
     }).join('');
-    nightRows += `<tr><td style="${TDL}">${escHtml(home)}</td>${cells}</tr>`;
+    nightRows += `<tr><td style="${TDL}">${escHtml(staff)}</td>${cells}</tr>`;
   }
 
   // 世話人テーブル行
   let soRows = '';
-  for (const home of homes) {
+  for (const staff of staffList) {
     const cells = dates.map(d => {
-      const h = sodaninHours[home][d];
+      const h = sodaninHours[staff][d];
       const color = h > 0 ? '' : 'color:#aaa;';
       return `<td style="${TD};${color}">${h}</td>`;
     }).join('');
-    soRows += `<tr><td style="${TDL}">${escHtml(home)}</td>${cells}</tr>`;
+    soRows += `<tr><td style="${TDL}">${escHtml(staff)}</td>${cells}</tr>`;
   }
 
   const tblStyle = 'border-collapse:collapse;min-width:100%';
@@ -4724,7 +5078,7 @@ function _renderJininTables(homes, dates, nightData, sodaninHours, year, month) 
       <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">世話人（時間）</div>
       <div style="overflow-x:auto;margin-bottom:14px">
         <table style="${tblStyle}">
-          <thead><tr><th style="${TH};text-align:left;min-width:80px">住居</th>${dayHeaders}</tr></thead>
+          <thead><tr><th style="${TH};text-align:left;min-width:90px">職員名</th>${dayHeaders}</tr></thead>
           <tbody>${soRows}</tbody>
         </table>
       </div>
@@ -4732,7 +5086,7 @@ function _renderJininTables(homes, dates, nightData, sodaninHours, year, month) 
       <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">夜間従事者</div>
       <div style="overflow-x:auto">
         <table style="${tblStyle}">
-          <thead><tr><th style="${TH};text-align:left;min-width:80px">住居</th>${dayHeaders}</tr></thead>
+          <thead><tr><th style="${TH};text-align:left;min-width:90px">職員名</th>${dayHeaders}</tr></thead>
           <tbody>${nightRows}</tbody>
         </table>
       </div>
@@ -4740,6 +5094,16 @@ function _renderJininTables(homes, dates, nightData, sodaninHours, year, month) 
       <div style="font-size:11px;color:#888;margin-top:10px">
         ※ 世話人時間 = 前日シフトの翌日時間 + 当日シフトの当日時間
       </div>
+      ${hasAttend ? `<div style="font-size:11px;margin-top:6px;display:flex;gap:14px;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:4px">
+          <span style="display:inline-block;width:20px;height:14px;background:#fff0f0;border:1px solid #e57373;vertical-align:middle"></span>
+          日報と勤怠が不一致（上段:日報 / 下段:勤怠）
+        </span>
+        <span style="display:flex;align-items:center;gap:4px">
+          <span style="display:inline-block;width:20px;height:14px;background:#fff8e1;border:1px solid #fb8c00;vertical-align:middle"></span>
+          日報に記録なし・勤怠にあり
+        </span>
+      </div>` : ''}
     </div>
   `;
 }
@@ -4836,6 +5200,741 @@ function renderMealCountTable(days, residents, lookup, homeName, year, month) {
       </div>
     </div>
   `;
+}
+
+// ==============================
+// INVOICE & SR REPORT
+// ==============================
+const INV_RES_KEY = 'nippou_invoice_residents';
+const INV_SET_KEY = 'nippou_invoice_settings';
+const INV_FRM_KEY = 'nippou_forms_data';
+const INV_SR_KEY  = 'nippou_sr_staff_order';
+
+function _getInvRes() { return JSON.parse(localStorage.getItem(INV_RES_KEY) || '[]'); }
+function _setInvRes(d) { localStorage.setItem(INV_RES_KEY, JSON.stringify(d)); }
+function _getInvSet() {
+  const def = {
+    invoiceNo: 1715,
+    titleGeneral: "グループホームOne's place 利用料",
+    titleSatellite: "One's place サテライト 利用料",
+    reqDay: 10, payDay: 20,
+    biko: "口座振込をご希望の場合、下記口座へお振込をお願いします。\n高崎信用金庫北支店　普通　口座番号2250002\n㈱エンジョイント\n※振込の場合、手数料は入金者様のご負担でお願い致します。",
+    furikomi: "料金は原則、ご指定口座からの自動引落を利用させて頂きます。",
+    furikomiCash: "現金にてお支払いをお願いいたします。",
+    memoMail: "請求書領収書はメール",
+    memoPost: "請求書領収書は郵送",
+  };
+  return Object.assign({}, def, JSON.parse(localStorage.getItem(INV_SET_KEY) || '{}'));
+}
+function _setInvSet(d) { localStorage.setItem(INV_SET_KEY, JSON.stringify(d)); }
+function _getFormsData() {
+  return JSON.parse(localStorage.getItem(INV_FRM_KEY) ||
+    '{"tokubetsuTeate":[],"tatekakin":[],"sharyou":[],"kashitsuke":[]}');
+}
+function _setFormsData(d) { localStorage.setItem(INV_FRM_KEY, JSON.stringify(d)); }
+function _getSrStaff() { return JSON.parse(localStorage.getItem(INV_SR_KEY) || '[]'); }
+function _setSrStaff(d) { localStorage.setItem(INV_SR_KEY, JSON.stringify(d)); }
+
+let _invEditingId = null;
+
+function showInvoiceScreen() {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const csvEl = document.getElementById('inv-csv-month');
+  if (csvEl && !csvEl.value) csvEl.value = ym;
+  const srEl = document.getElementById('inv-sr-month');
+  if (srEl && !srEl.value) srEl.value = ym;
+  _loadInvCsvSettings();
+  showScreen('invoice');
+  showInvoiceTab('residents');
+}
+
+function showInvoiceTab(tab) {
+  ['residents','forms','invoice','sr'].forEach(t => {
+    document.getElementById(`invoice-tab-${t}`)?.classList.toggle('hidden', t !== tab);
+    document.getElementById(`invoice-tabbt-${t}`)?.classList.toggle('active', t === tab);
+  });
+  if (tab === 'residents') _renderInvResidents();
+  if (tab === 'forms')     _renderInvForms();
+  if (tab === 'sr')        _renderSrStaff();
+}
+
+// ---------- 入居者情報 ----------
+function _renderInvResidents() {
+  const el = document.getElementById('inv-residents-list');
+  if (!el) return;
+  const residents = _getInvRes();
+  if (!residents.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">入居者が登録されていません</div>';
+    return;
+  }
+  const byHome = {};
+  for (const r of residents) {
+    const h = r.home || '未設定';
+    if (!byHome[h]) byHome[h] = [];
+    byHome[h].push(r);
+  }
+  el.innerHTML = Object.entries(byHome).map(([home, list]) => `
+    <div style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--primary);padding:4px 0;border-bottom:1px solid var(--border);margin-bottom:6px">${escHtml(home)}</div>
+      ${list.map(r => `
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid #f5f5f5">
+          <div style="flex:1">
+            <div style="font-size:13px;font-weight:600">${escHtml(r.name)}</div>
+            <div style="font-size:11px;color:var(--text-muted)">${escHtml(r.billingName||'')} ${r.type==='サテライト'?'<span style="color:#e65100;font-size:10px">[サテライト]</span>':''}</div>
+          </div>
+          <button class="btn btn-secondary" style="width:auto;padding:4px 10px;font-size:11px" onclick="editInvResident('${r.id}')">編集</button>
+          <button class="btn btn-secondary" style="width:auto;padding:4px 10px;font-size:11px;color:#c62828;border-color:#c62828" onclick="deleteInvResident('${r.id}')">削除</button>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+}
+
+function editInvResident(id) {
+  _invEditingId = id;
+  const residents = _getInvRes();
+  const t = (id ? residents.find(x => x.id === id) : null) || {};
+  document.getElementById('inv-modal-title').textContent = id ? '入居者情報を編集' : '入居者を追加';
+  document.getElementById('inv-modal-body').innerHTML = `
+    <div style="display:grid;gap:10px">
+      <div style="font-size:12px;font-weight:700;color:var(--primary);border-bottom:1px solid var(--border);padding-bottom:4px">基本情報</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">住居名</label><input id="invf-home" class="form-input" style="margin:0" value="${escHtml(t.home||'')}"></div>
+        <div><label class="form-label">種別</label>
+          <select id="invf-type" class="form-select" style="margin:0">
+            <option value="一般" ${(t.type||'一般')==='一般'?'selected':''}>一般</option>
+            <option value="サテライト" ${t.type==='サテライト'?'selected':''}>サテライト</option>
+          </select>
+        </div>
+      </div>
+      <div><label class="form-label">氏名（日報と一致させること）</label><input id="invf-name" class="form-input" style="margin:0" value="${escHtml(t.name||'')}"></div>
+      <div><label class="form-label">請求書宛名</label><input id="invf-billingName" class="form-input" style="margin:0" value="${escHtml(t.billingName||'')}"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">敬称</label>
+          <select id="invf-salutation" class="form-select" style="margin:0">
+            <option value="様" ${(t.salutation||'様')==='様'?'selected':''}>様</option>
+            <option value="御中" ${t.salutation==='御中'?'selected':''}>御中</option>
+          </select>
+        </div>
+        <div><label class="form-label">支払方法</label>
+          <select id="invf-payMethod" class="form-select" style="margin:0">
+            <option value="口座引落" ${(t.payMethod||'口座引落')==='口座引落'?'selected':''}>口座引落</option>
+            <option value="現金" ${t.payMethod==='現金'?'selected':''}>現金</option>
+            <option value="自分で支払い" ${t.payMethod==='自分で支払い'?'selected':''}>自分で支払い</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:8px">
+        <div><label class="form-label">郵便番号</label><input id="invf-zip" class="form-input" style="margin:0" value="${escHtml(t.zip||'')}"></div>
+        <div><label class="form-label">都道府県</label><input id="invf-pref" class="form-input" style="margin:0" value="${escHtml(t.pref||'群馬県')}"></div>
+      </div>
+      <div><label class="form-label">住所1</label><input id="invf-addr1" class="form-input" style="margin:0" value="${escHtml(t.addr1||'')}"></div>
+      <div><label class="form-label">住所2</label><input id="invf-addr2" class="form-input" style="margin:0" value="${escHtml(t.addr2||'')}"></div>
+      <div><label class="form-label">メモ（請求書のメモ欄に追記される）</label><input id="invf-memo" class="form-input" style="margin:0" value="${escHtml(t.memo||'')}"></div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--primary);border-bottom:1px solid var(--border);padding-bottom:4px;margin-top:4px">固定費</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">家賃（補助前）</label><input type="number" id="invf-rent" class="form-input" style="margin:0" value="${t.rent||0}" placeholder="0=出力しない"></div>
+        <div><label class="form-label">家賃（補助後）</label><input type="number" id="invf-rentSubsidy" class="form-input" style="margin:0" value="${t.rentSubsidy||0}" placeholder="0=出力しない"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">光熱費</label><input type="number" id="invf-utility" class="form-input" style="margin:0" value="${t.utility||0}"></div>
+        <div><label class="form-label">日用品費</label><input type="number" id="invf-supplies" class="form-input" style="margin:0" value="${t.supplies||0}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">金銭管理料</label><input type="number" id="invf-moneyMgmtAmt" class="form-input" style="margin:0" value="${t.moneyMgmtAmt||0}" placeholder="0=出力しない"></div>
+        <div><label class="form-label">請求書郵送</label>
+          <select id="invf-mailInvoice" class="form-select" style="margin:0">
+            <option value="0" ${!t.mailInvoice?'selected':''}>なし（メール）</option>
+            <option value="1" ${t.mailInvoice?'selected':''}>あり（郵送210×2=420）</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">給付費負担（1割）</label>
+          <select id="invf-benefitBurden" class="form-select" style="margin:0">
+            <option value="0" ${!t.benefitBurden?'selected':''}>なし</option>
+            <option value="1" ${t.benefitBurden?'selected':''}>あり</option>
+          </select>
+        </div>
+        <div></div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--primary);border-bottom:1px solid var(--border);padding-bottom:4px;margin-top:4px">食事単価（円/回）</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <div><label class="form-label">朝食（食材料費）</label><input type="number" id="invf-mealM" class="form-input" style="margin:0" value="${t.mealMorningPrice!=null?t.mealMorningPrice:300}"></div>
+        <div><label class="form-label">昼食（食材料費）</label><input type="number" id="invf-mealL" class="form-input" style="margin:0" value="${t.mealLunchPrice!=null?t.mealLunchPrice:400}"></div>
+        <div><label class="form-label">夕食（食材料費）</label><input type="number" id="invf-mealE" class="form-input" style="margin:0" value="${t.mealEveningPrice!=null?t.mealEveningPrice:500}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+        <div><label class="form-label">朝食（主食のみ）</label><input type="number" id="invf-riceM" class="form-input" style="margin:0" value="${t.mealMorningRicePrice!=null?t.mealMorningRicePrice:150}"></div>
+        <div><label class="form-label">昼食（主食のみ）</label><input type="number" id="invf-riceL" class="form-input" style="margin:0" value="${t.mealLunchRicePrice!=null?t.mealLunchRicePrice:150}"></div>
+        <div><label class="form-label">夕食（主食のみ）</label><input type="number" id="invf-riceE" class="form-input" style="margin:0" value="${t.mealEveningRicePrice!=null?t.mealEveningRicePrice:150}"></div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--primary);border-bottom:1px solid var(--border);padding-bottom:4px;margin-top:4px">月次変動費（固定登録分）</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">食事・送迎・その他はFormsデータから自動取得。毎月固定で請求がある場合のみ入力。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label class="form-label">清算額</label><input type="number" id="invf-adj" class="form-input" style="margin:0" value="${t.adjustment||0}"></div>
+        <div><label class="form-label">清算の詳細</label><input id="invf-adjDetail" class="form-input" style="margin:0" value="${escHtml(t.adjustmentDetail||'')}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px">
+        <div><label class="form-label">イレギュラー品目①</label><input id="invf-ex1name" class="form-input" style="margin:0" value="${escHtml(t.extraItem1||'')}"></div>
+        <div><label class="form-label">単価①</label><input type="number" id="invf-ex1price" class="form-input" style="margin:0" value="${t.extraPrice1||0}"></div>
+        <div><label class="form-label">数量①</label><input type="number" id="invf-ex1qty" class="form-input" style="margin:0" value="${t.extraQty1||1}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px">
+        <div><label class="form-label">イレギュラー品目②</label><input id="invf-ex2name" class="form-input" style="margin:0" value="${escHtml(t.extraItem2||'')}"></div>
+        <div><label class="form-label">単価②</label><input type="number" id="invf-ex2price" class="form-input" style="margin:0" value="${t.extraPrice2||0}"></div>
+        <div><label class="form-label">数量②</label><input type="number" id="invf-ex2qty" class="form-input" style="margin:0" value="${t.extraQty2||1}"></div>
+      </div>
+    </div>
+  `;
+  document.getElementById('inv-resident-modal').style.display = 'block';
+}
+
+function saveInvResident() {
+  const gv = id => document.getElementById(id)?.value || '';
+  const gn = id => Number(document.getElementById(id)?.value || 0);
+  const gb = id => document.getElementById(id)?.value === '1';
+  const r = {
+    id: _invEditingId || String(Date.now()),
+    home: gv('invf-home'), type: gv('invf-type'),
+    name: gv('invf-name'), billingName: gv('invf-billingName'),
+    salutation: gv('invf-salutation'), payMethod: gv('invf-payMethod'),
+    zip: gv('invf-zip'), pref: gv('invf-pref'),
+    addr1: gv('invf-addr1'), addr2: gv('invf-addr2'),
+    memo: gv('invf-memo'),
+    rent: gn('invf-rent'), rentSubsidy: gn('invf-rentSubsidy'),
+    utility: gn('invf-utility'), supplies: gn('invf-supplies'),
+    moneyMgmtAmt: gn('invf-moneyMgmtAmt'),
+    mailInvoice: gb('invf-mailInvoice'),
+    benefitBurden: gb('invf-benefitBurden'),
+    mealMorningPrice: gn('invf-mealM'), mealLunchPrice: gn('invf-mealL'), mealEveningPrice: gn('invf-mealE'),
+    mealMorningRicePrice: gn('invf-riceM'), mealLunchRicePrice: gn('invf-riceL'), mealEveningRicePrice: gn('invf-riceE'),
+    adjustment: gn('invf-adj'), adjustmentDetail: gv('invf-adjDetail'),
+    extraItem1: gv('invf-ex1name'), extraPrice1: gn('invf-ex1price'), extraQty1: gn('invf-ex1qty'),
+    extraItem2: gv('invf-ex2name'), extraPrice2: gn('invf-ex2price'), extraQty2: gn('invf-ex2qty'),
+  };
+  if (!r.name) { showToast('氏名を入力してください', 'error'); return; }
+  const residents = _getInvRes();
+  const idx = residents.findIndex(x => x.id === r.id);
+  if (idx >= 0) residents[idx] = r; else residents.push(r);
+  _setInvRes(residents);
+  document.getElementById('inv-resident-modal').style.display = 'none';
+  _renderInvResidents();
+  showToast('保存しました', 'success');
+}
+
+function deleteInvResident(id) {
+  if (!confirm('この入居者を削除しますか？')) return;
+  _setInvRes(_getInvRes().filter(r => r.id !== id));
+  _renderInvResidents();
+  showToast('削除しました', 'success');
+}
+
+// ---------- Formsデータ ----------
+function _renderInvForms() {
+  const el = document.getElementById('inv-forms-content');
+  if (!el) return;
+  const d = _getFormsData();
+  el.innerHTML =
+    _formUploadCard('特別手当申請', 'tokubetsuTeate', d.tokubetsuTeate) +
+    _formUploadCard('立替金申請', 'tatekakin', d.tatekakin) +
+    _formUploadCard('車両運行記録', 'sharyou', d.sharyou) +
+    _formUploadCard('会社→入居者 貸付記録', 'kashitsuke', d.kashitsuke) +
+    _sharyouEditorHtml(d.sharyou);
+}
+
+function _formUploadCard(label, type, data) {
+  const cnt = data ? data.length : 0;
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div class="card-title">${label}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">登録件数: <strong>${cnt}件</strong></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px;cursor:pointer">
+          Excelをアップロード
+          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadFormsFile('${type}',this)">
+        </label>
+        ${cnt ? `<button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px;color:#c62828;border-color:#c62828" onclick="clearFormsData('${type}')">クリア</button>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function _sharyouEditorHtml(data) {
+  if (!data || !data.length) return '';
+  return `
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div class="card-title" style="margin:0">車両運行記録（内容確認・編集）</div>
+        <button class="btn btn-secondary" style="width:auto;padding:4px 10px;font-size:11px" onclick="addSharyouRow()">＋ 行追加</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px" id="sharyou-editor-table">
+          <thead><tr style="background:#f5f5f5">
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">氏名</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">日付</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">車種</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">km</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">区分</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">入居者名</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0;white-space:nowrap">目的地</th>
+            <th style="padding:4px 6px;border:1px solid #e0e0e0"></th>
+          </tr></thead>
+          <tbody>
+            ${data.map((row, idx) => `
+              <tr data-idx="${idx}">
+                <td style="padding:2px;border:1px solid #e0e0e0"><input class="sr-name2" value="${escHtml(row.name||'')}" style="font-size:11px;border:none;width:64px"></td>
+                <td style="padding:2px;border:1px solid #e0e0e0"><input class="sr-date" type="date" value="${escHtml(row.date||'')}" style="font-size:11px;border:none;width:110px"></td>
+                <td style="padding:2px;border:1px solid #e0e0e0">
+                  <select class="sr-cartype" style="font-size:11px;border:none">
+                    <option ${row.carType==='自家用車'?'selected':''}>自家用車</option>
+                    <option ${row.carType==='社用車'?'selected':''}>社用車</option>
+                  </select>
+                </td>
+                <td style="padding:2px;border:1px solid #e0e0e0"><input class="sr-km" type="number" value="${row.km||0}" style="font-size:11px;border:none;width:46px"></td>
+                <td style="padding:2px;border:1px solid #e0e0e0">
+                  <select class="sr-reason" style="font-size:11px;border:none">
+                    <option value="スタッフのみ" ${row.reason==='スタッフのみ'?'selected':''}>スタッフのみ</option>
+                    <option value="入居者送迎" ${row.reason==='入居者送迎'?'selected':''}>入居者送迎</option>
+                  </select>
+                </td>
+                <td style="padding:2px;border:1px solid #e0e0e0"><input class="sr-residents" value="${escHtml(row.residents||'')}" style="font-size:11px;border:none;width:80px"></td>
+                <td style="padding:2px;border:1px solid #e0e0e0"><input class="sr-dest" value="${escHtml(row.destination||'')}" style="font-size:11px;border:none;width:80px"></td>
+                <td style="padding:2px;border:1px solid #e0e0e0;text-align:center"><button onclick="deleteSharyouRow(${idx})" style="background:none;border:none;color:#c62828;cursor:pointer">✕</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <button class="btn btn-primary" style="width:auto;padding:6px 14px;font-size:12px;margin-top:8px" onclick="saveSharyouEdits()">変更を保存</button>
+    </div>
+  `;
+}
+
+function saveSharyouEdits() {
+  const table = document.getElementById('sharyou-editor-table');
+  if (!table) return;
+  const rows = [];
+  for (const tr of table.querySelectorAll('tbody tr')) {
+    rows.push({
+      name: tr.querySelector('.sr-name2').value.trim(),
+      date: tr.querySelector('.sr-date').value,
+      carType: tr.querySelector('.sr-cartype').value,
+      km: Number(tr.querySelector('.sr-km').value) || 0,
+      reason: tr.querySelector('.sr-reason').value,
+      residents: tr.querySelector('.sr-residents').value.trim(),
+      destination: tr.querySelector('.sr-dest').value.trim(),
+    });
+  }
+  const d = _getFormsData();
+  d.sharyou = rows;
+  _setFormsData(d);
+  showToast('車両運行記録を保存しました', 'success');
+  _renderInvForms();
+}
+
+function addSharyouRow() {
+  const d = _getFormsData();
+  if (!d.sharyou) d.sharyou = [];
+  d.sharyou.push({ name: '', date: '', carType: '自家用車', km: 0, reason: 'スタッフのみ', residents: '', destination: '' });
+  _setFormsData(d);
+  _renderInvForms();
+}
+
+function deleteSharyouRow(idx) {
+  const d = _getFormsData();
+  d.sharyou.splice(idx, 1);
+  _setFormsData(d);
+  _renderInvForms();
+}
+
+function clearFormsData(type) {
+  if (!confirm(`${type}のデータを削除しますか？`)) return;
+  const d = _getFormsData();
+  d[type] = [];
+  _setFormsData(d);
+  _renderInvForms();
+}
+
+async function uploadFormsFile(type, input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!window.XLSX) { showToast('SheetJSが読み込めていません。再読み込みしてください', 'error'); return; }
+  try {
+    const wb = await _readXlsxFile(file);
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', cellDates: true });
+    const parsed = _parseFormsRows(type, rawData.slice(1));
+    if (!parsed.length) { showToast('データが見つかりませんでした', 'error'); input.value = ''; return; }
+    const d = _getFormsData();
+    const existingIds = new Set((d[type] || []).map(r => r._id).filter(Boolean));
+    const newRows = parsed.filter(r => !r._id || !existingIds.has(r._id));
+    d[type] = [...(d[type] || []), ...newRows];
+    _setFormsData(d);
+    showToast(`${newRows.length}件を追加しました（合計${d[type].length}件）`, 'success');
+    _renderInvForms();
+  } catch(e) {
+    showToast(`読み込みエラー: ${e.message}`, 'error');
+  }
+  input.value = '';
+}
+
+function _readXlsxFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try { resolve(XLSX.read(e.target.result, { type: 'array', cellDates: true })); }
+      catch(err) { reject(err); }
+    };
+    reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function _fmtXlsxDate(v) {
+  if (!v) return '';
+  if (v instanceof Date) {
+    return `${v.getFullYear()}-${String(v.getMonth()+1).padStart(2,'0')}-${String(v.getDate()).padStart(2,'0')}`;
+  }
+  return String(v).split('T')[0];
+}
+
+function _parseFormsRows(type, rows) {
+  const parsed = [];
+  for (const row of rows) {
+    if (!row[0] && !row[6]) continue;
+    const id = String(row[0] || '');
+    if (type === 'tokubetsuTeate') {
+      parsed.push({ _id: id, name: String(row[6]||'').trim(), type: String(row[7]||''), workDate: _fmtXlsxDate(row[8]), requestDate: _fmtXlsxDate(row[9]), home: String(row[10]||''), requesterName: String(row[11]||''), yearEndDate: _fmtXlsxDate(row[12]) });
+    } else if (type === 'tatekakin') {
+      parsed.push({ _id: id, name: String(row[6]||'').trim(), date: _fmtXlsxDate(row[7]), amount: Number(row[8]||0), description: String(row[9]||'').trim() });
+    } else if (type === 'sharyou') {
+      const carRaw = String(row[8]||'');
+      const reasonRaw = String(row[10]||'');
+      parsed.push({ _id: id, name: String(row[6]||'').trim(), date: _fmtXlsxDate(row[7]), carType: carRaw.includes('社用車') ? '社用車' : '自家用車', km: Number(row[9]||0), reason: (reasonRaw.includes('送迎') && !reasonRaw.includes('以外')) ? '入居者送迎' : 'スタッフのみ', residents: String(row[11]||'').trim(), destination: String(row[12]||'').trim() });
+    } else if (type === 'kashitsuke') {
+      parsed.push({ _id: id, name: String(row[6]||'').trim(), date: _fmtXlsxDate(row[7]), residentName: String(row[8]||'').trim(), amount: Number(row[9]||0), reason: String(row[10]||'').trim() });
+    }
+  }
+  return parsed;
+}
+
+// ---------- 請求書CSV設定 ----------
+function _loadInvCsvSettings() {
+  const s = _getInvSet();
+  const el = id => document.getElementById(id);
+  if (el('inv-csv-no'))           el('inv-csv-no').value           = s.invoiceNo;
+  if (el('inv-csv-title'))        el('inv-csv-title').value        = s.titleGeneral;
+  if (el('inv-csv-title-sat'))    el('inv-csv-title-sat').value    = s.titleSatellite;
+  if (el('inv-csv-biko'))         el('inv-csv-biko').value         = s.biko;
+  if (el('inv-csv-furikomi'))     el('inv-csv-furikomi').value     = s.furikomi;
+  if (el('inv-csv-furikomi-cash'))el('inv-csv-furikomi-cash').value= s.furikomiCash;
+  if (el('inv-csv-memo-mail'))    el('inv-csv-memo-mail').value    = s.memoMail;
+  if (el('inv-csv-memo-post'))    el('inv-csv-memo-post').value    = s.memoPost;
+}
+
+function _saveInvCsvSettingsFromUI() {
+  const s = _getInvSet();
+  const gv = id => document.getElementById(id)?.value ?? '';
+  s.invoiceNo    = Number(gv('inv-csv-no')) || s.invoiceNo;
+  s.titleGeneral = gv('inv-csv-title') || s.titleGeneral;
+  s.titleSatellite = gv('inv-csv-title-sat') || s.titleSatellite;
+  s.biko         = gv('inv-csv-biko');
+  s.furikomi     = gv('inv-csv-furikomi');
+  s.furikomiCash = gv('inv-csv-furikomi-cash');
+  s.memoMail     = gv('inv-csv-memo-mail');
+  s.memoPost     = gv('inv-csv-memo-post');
+  _setInvSet(s);
+  return s;
+}
+
+// ---------- 請求書CSV生成 ----------
+const INV_CSV_HEADER = [
+  'csv_type(変更不可)','行形式','取引先名称','件名','請求日','お支払期限','請求書番号',
+  '売上計上日','メモ','タグ','小計','消費税','合計金額','取引先敬称','取引先郵便番号',
+  '取引先都道府県','取引先住所1','取引先住所2','取引先部署','取引先担当者役職','取引先担当者氏名',
+  '自社担当者氏名','備考','振込先','入金ステータス','メール送信ステータス','郵送ステータス',
+  'ダウンロードステータス','納品日','品名','品目コード','単価','数量','単位','納品書番号',
+  '詳細','金額','品目消費税率'
+];
+
+async function generateInvoiceCsv() {
+  const monthVal = document.getElementById('inv-csv-month')?.value;
+  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+  const [ty, tm] = monthVal.split('-').map(Number);
+  const s = _saveInvCsvSettingsFromUI();
+  const statusEl = document.getElementById('inv-csv-status');
+  if (statusEl) statusEl.textContent = '日報データを取得中...';
+  try {
+    const allRows = await readExcelAllRows();
+    const from = `${ty}-${String(tm).padStart(2,'0')}-01`;
+    const to   = `${ty}-${String(tm).padStart(2,'0')}-${String(new Date(ty,tm,0).getDate()).padStart(2,'0')}`;
+    const monthRows = allRows.filter(r => { const d = _toDateStr(r.values[VH['報告日']]); return d >= from && d <= to; });
+    if (statusEl) statusEl.textContent = 'CSV生成中...';
+    const residents = _getInvRes().filter(r => r.name);
+    const formsData = _getFormsData();
+    const csvRows = [INV_CSV_HEADER];
+    let invoiceNo = s.invoiceNo;
+    const reqDate = `${ty}/${String(tm).padStart(2,'0')}/${String(s.reqDay||10).padStart(2,'0')}`;
+    const payDate = `${ty}/${String(tm).padStart(2,'0')}/${String(s.payDay||20).padStart(2,'0')}`;
+    for (const resident of residents) {
+      const billingName = resident.billingName || resident.name;
+      const title = (resident.type === 'サテライト' ? s.titleSatellite : s.titleGeneral) + `（${ty}年${tm}月分）`;
+      const memoBase = resident.memo ? resident.memo + '。' : '';
+      const memo = memoBase + (resident.mailInvoice ? s.memoPost : s.memoMail);
+      const furikomi = resident.payMethod === '現金' ? s.furikomiCash : s.furikomi;
+      const items = _buildInvItems(resident, ty, tm, monthRows, formsData);
+      const hdr = Array(38).fill('');
+      hdr[0]='40101'; hdr[1]='請求書';
+      hdr[2]=billingName; hdr[3]=title;
+      hdr[4]=reqDate; hdr[5]=payDate;
+      hdr[6]=String(invoiceNo++); hdr[7]=reqDate; hdr[8]=memo;
+      hdr[13]=resident.salutation||'様';
+      hdr[14]=resident.zip||''; hdr[15]=resident.pref||'群馬県';
+      hdr[16]=resident.addr1||''; hdr[17]=resident.addr2||'';
+      hdr[22]=s.biko||''; hdr[23]=furikomi;
+      csvRows.push(hdr);
+      for (const item of items) {
+        const row = Array(38).fill('');
+        row[0]='40101'; row[1]='品目';
+        row[29]=item.name; row[31]=item.price!=null?String(item.price):'';
+        row[32]=String(item.qty??1); row[35]=item.detail||'';
+        row[36]=item.amount!=null?String(item.amount):''; row[37]='免税';
+        csvRows.push(row);
+      }
+    }
+    s.invoiceNo = invoiceNo;
+    _setInvSet(s);
+    const csvText = csvRows.map(r => r.map(v => {
+      const sv = String(v ?? '');
+      return (sv.includes(',') || sv.includes('"') || sv.includes('\n'))
+        ? `"${sv.replace(/"/g,'""')}"` : sv;
+    }).join(',')).join('\r\n');
+    const blob = new Blob(['﻿' + csvText], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    a.download = `請求書インポート_${ty}${String(tm).padStart(2,'0')}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    if (statusEl) statusEl.textContent = `完了: ${residents.length}件の請求書データを生成しました（次回請求書番号: ${invoiceNo}）`;
+    showToast('請求書CSVを生成しました', 'success');
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '';
+    showToast(`エラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+}
+
+function _buildInvItems(resident, year, month, monthRows, formsData) {
+  const items = [];
+  const normN = s => String(s||'').replace(/[\s　]+/g,'').trim();
+  const rName = normN(resident.name);
+
+  // 家賃
+  if (resident.rentSubsidy > 0) {
+    items.push({ name: '家賃 ※家賃補助1万円適用後', price: resident.rentSubsidy, qty: 1, amount: resident.rentSubsidy });
+  } else if (resident.rent > 0) {
+    items.push({ name: '家賃', price: resident.rent, qty: 1, amount: resident.rent });
+  }
+  // 光熱費
+  if (resident.utility > 0) items.push({ name: '光熱費', price: resident.utility, qty: 1, amount: resident.utility });
+  // 日用品費
+  if (resident.supplies > 0) items.push({ name: '日用品費', price: resident.supplies, qty: 1, amount: resident.supplies });
+  // 金銭管理料
+  if (resident.moneyMgmtAmt > 0) items.push({ name: '金銭管理料', price: resident.moneyMgmtAmt, qty: 1, amount: resident.moneyMgmtAmt });
+  // 給付費負担
+  if (resident.benefitBurden) items.push({ name: '給付費（1割負担分）', price: null, qty: 1, amount: null });
+  // 郵送代
+  if (resident.mailInvoice) items.push({ name: '郵送代', price: 210, qty: 2, amount: 420 });
+
+  // 食事カウント（日報から）
+  const mc = { m:0,l:0,e:0,mr:0,lr:0,er:0 };
+  for (const row of monthRows) {
+    if (normN(String(row.values[VH['利用者名']]||'')) !== rName) continue;
+    const slot    = String(row.values[VH['時間帯']]||'');
+    const shokuji = String(row.values[VH['食事内容']]||'').split('\n')[0].trim();
+    const chushoku= String(row.values[VH['昼食準備']]||'').split('\n')[0].trim();
+    if (slot === '早朝') {
+      if (shokuji === '提供あり') mc.m++;
+      else if (shokuji === '主食のみ提供') mc.mr++;
+      if (chushoku === '提供あり') mc.l++;
+      else if (chushoku === '主食のみ提供') mc.lr++;
+    } else if (slot === '日中') {
+      if (shokuji === '提供あり') mc.e++;
+      else if (shokuji === '主食のみ提供') mc.er++;
+    }
+  }
+  const mp=resident.mealMorningPrice??300, lp=resident.mealLunchPrice??400, ep=resident.mealEveningPrice??500;
+  const rp=resident.mealMorningRicePrice??150, rlp=resident.mealLunchRicePrice??150, rep=resident.mealEveningRicePrice??150;
+  if (mc.m>0)  items.push({ name:'食材料費（朝食）', price:mp, qty:mc.m, amount:mp*mc.m });
+  if (mc.l>0)  items.push({ name:'食材料費（昼食）', price:lp, qty:mc.l, amount:lp*mc.l });
+  if (mc.e>0)  items.push({ name:'食材料費（夕食）', price:ep, qty:mc.e, amount:ep*mc.e });
+  if (mc.mr>0) items.push({ name:'朝食代（主食のみ）', price:rp, qty:mc.mr, amount:rp*mc.mr });
+  if (mc.lr>0) items.push({ name:'昼食代（主食のみ）', price:rlp, qty:mc.lr, amount:rlp*mc.lr });
+  if (mc.er>0) items.push({ name:'夕食代（主食のみ）', price:rep, qty:mc.er, amount:rep*mc.er });
+
+  // 送迎代（車両運行記録から）
+  const ymStr = `${year}-${String(month).padStart(2,'0')}`;
+  const transport = [];
+  for (const row of (formsData.sharyou||[])) {
+    if (!row.date?.startsWith(ymStr)) continue;
+    if (row.reason !== '入居者送迎') continue;
+    const resNames = (row.residents||'').split(/[,、,　 ]+/).map(s => normN(s)).filter(Boolean);
+    if (!resNames.includes(rName)) continue;
+    transport.push({ date: row.date, km: row.km||0, destination: row.destination||'' });
+  }
+  if (transport.length > 0) {
+    const totalKm = transport.reduce((s,t) => s + t.km, 0);
+    const detail = transport.map(t => `${t.date}：${t.destination}（${t.km}km）`).join(' ');
+    items.push({ name:'送迎代（1kmあたり35円）', price:35, qty:totalKm, amount:35*totalKm, detail });
+  }
+
+  // その他（貸付記録から）
+  const loans = (formsData.kashitsuke||[]).filter(r => r.date?.startsWith(ymStr) && normN(r.residentName)===rName);
+  if (loans.length > 0) {
+    const total = loans.reduce((s,r) => s + (r.amount||0), 0);
+    const detail = loans.map(r => `${r.date}：${r.reason}`).join(' ');
+    items.push({ name:'その他（貸付金返済）', price:total, qty:1, amount:total, detail });
+  }
+
+  // 清算
+  if (resident.adjustment > 0) {
+    items.push({ name:'清算', price:resident.adjustment, qty:1, amount:resident.adjustment, detail: resident.adjustmentDetail||'' });
+  }
+  // イレギュラー品目
+  if (resident.extraItem1 && resident.extraQty1 > 0) {
+    items.push({ name:resident.extraItem1, price:resident.extraPrice1, qty:resident.extraQty1, amount:(resident.extraPrice1||0)*(resident.extraQty1||0) });
+  }
+  if (resident.extraItem2 && resident.extraQty2 > 0) {
+    items.push({ name:resident.extraItem2, price:resident.extraPrice2, qty:resident.extraQty2, amount:(resident.extraPrice2||0)*(resident.extraQty2||0) });
+  }
+  return items;
+}
+
+// ---------- 社労士シート ----------
+function _renderSrStaff() {
+  const el = document.getElementById('sr-staff-list');
+  if (!el) return;
+  const staff = _getSrStaff();
+  if (!staff.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">スタッフ未登録。「＋ 追加」から登録してください。</div>';
+    return;
+  }
+  el.innerHTML = staff.map((s, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px" data-idx="${i}">
+      <span style="font-size:11px;color:var(--text-muted);min-width:20px">${i+1}</span>
+      <input class="sr-code form-input" style="margin:0;width:80px;font-size:12px" placeholder="個人コード" value="${escHtml(s.code||'')}">
+      <input class="sr-sname form-input" style="margin:0;flex:1;font-size:12px" placeholder="氏名" value="${escHtml(s.name||'')}">
+      <button onclick="deleteSrStaffRow(${i})" style="background:none;border:none;color:#c62828;cursor:pointer;font-size:14px">✕</button>
+    </div>
+  `).join('');
+}
+
+function addSrStaffRow() {
+  const staff = _getSrStaff();
+  staff.push({ code: '', name: '' });
+  _setSrStaff(staff);
+  _renderSrStaff();
+}
+
+function deleteSrStaffRow(idx) {
+  const staff = _getSrStaff();
+  staff.splice(idx, 1);
+  _setSrStaff(staff);
+  _renderSrStaff();
+}
+
+function saveSrStaff() {
+  const rows = document.querySelectorAll('#sr-staff-list [data-idx]');
+  const staff = [];
+  for (const row of rows) {
+    const code = row.querySelector('.sr-code')?.value.trim();
+    const name = row.querySelector('.sr-sname')?.value.trim();
+    if (code || name) staff.push({ code: code||'', name: name||'' });
+  }
+  _setSrStaff(staff);
+  showToast('スタッフ順序を保存しました', 'success');
+}
+
+async function generateSrExcel() {
+  if (!window.XLSX) { showToast('SheetJSが読み込めていません。再読み込みしてください', 'error'); return; }
+  const monthVal = document.getElementById('inv-sr-month')?.value;
+  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+  const [ty, tm] = monthVal.split('-').map(Number);
+  const statusEl = document.getElementById('inv-sr-status');
+  if (statusEl) statusEl.textContent = '日報データを取得中...';
+  try {
+    const allRows = await readExcelAllRows();
+    const from = `${ty}-${String(tm).padStart(2,'0')}-01`;
+    const to   = `${ty}-${String(tm).padStart(2,'0')}-${String(new Date(ty,tm,0).getDate()).padStart(2,'0')}`;
+    const monthRows = allRows.filter(r => { const d = _toDateStr(r.values[VH['報告日']]); return d >= from && d <= to; });
+    const formsData = _getFormsData();
+    const ymStr = `${ty}-${String(tm).padStart(2,'0')}`;
+    const staffList = _getSrStaff();
+    if (!staffList.length) { showToast('スタッフ順序が未登録です。社労士シートタブから登録してください', 'error'); return; }
+    const normN = s => String(s||'').replace(/[\s　]+/g,' ').trim();
+
+    // 特別手当（workDate or yearEndDate が対象月）
+    const teateMap = {};
+    for (const t of (formsData.tokubetsuTeate||[])) {
+      const d = t.workDate || t.yearEndDate;
+      if (!d?.startsWith(ymStr)) continue;
+      const n = normN(t.name);
+      teateMap[n] = (teateMap[n]||0) + _parseTeateAmount(t.type);
+    }
+
+    // 食事代（早朝=120, 日中=200）
+    const mealMap = {};
+    for (const row of monthRows) {
+      const sn = normN(String(row.values[VH['担当職員名']]||''));
+      if (!sn) continue;
+      const shokuji = String(row.values[VH['職員食事']]||'').trim();
+      if (!shokuji) continue;
+      const slot = String(row.values[VH['時間帯']]||'');
+      if (!mealMap[sn]) mealMap[sn] = 0;
+      mealMap[sn] += slot === '早朝' ? 120 : 200;
+    }
+
+    // 立替精算（tatekakin + sharyou自家用車スタッフのみ×35）
+    const tatekaeMap = {};
+    for (const t of (formsData.tatekakin||[])) {
+      if (!t.date?.startsWith(ymStr)) continue;
+      const n = normN(t.name);
+      tatekaeMap[n] = (tatekaeMap[n]||0) + (t.amount||0);
+    }
+    for (const s of (formsData.sharyou||[])) {
+      if (!s.date?.startsWith(ymStr)) continue;
+      if (s.reason !== 'スタッフのみ' || s.carType !== '自家用車') continue;
+      const n = normN(s.name);
+      tatekaeMap[n] = (tatekaeMap[n]||0) + (s.km||0) * 35;
+    }
+
+    const headerRow = ['個人コード', '氏　　名', '特別手当', '食事代', '立替精算分', '交通費'];
+    const dataRows = staffList.map(staff => {
+      const n = normN(staff.name);
+      return [staff.code||'', staff.name||'', teateMap[n]||0, mealMap[n]||0, tatekaeMap[n]||0, 0];
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);
+    ws['!cols'] = [{ wch:12 },{ wch:16 },{ wch:10 },{ wch:10 },{ wch:12 },{ wch:10 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '社労士提出シート');
+    XLSX.writeFile(wb, `社労士提出シート_${ty}${String(tm).padStart(2,'0')}.xlsx`);
+    if (statusEl) statusEl.textContent = `完了: ${staffList.length}名分を出力しました`;
+    showToast('社労士提出シートを生成しました', 'success');
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '';
+    showToast(`エラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+}
+
+function _parseTeateAmount(typeStr) {
+  const m = String(typeStr||'').match(/(\d{3,6})円/);
+  return m ? parseInt(m[1]) : 5000;
 }
 
 </script>

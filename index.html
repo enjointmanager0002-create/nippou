@@ -852,7 +852,7 @@
     </div>
 
     <div class="card" style="margin-top:0">
-      <button class="btn btn-primary" style="width:100%;font-size:14px" onclick="showAiSummary()">AI要約（直近2週間）</button>
+      <button class="btn btn-primary" style="width:100%;font-size:14px" onclick="showAiSummary(state.selectedHome)">AI要約（直近2週間）</button>
       <p style="font-size:11px;color:#aaa;margin:8px 0 0;text-align:center">※ クリックするたびにAPI費用が発生します。連続クリックにご注意ください。</p>
     </div>
 
@@ -1031,9 +1031,8 @@
           <input type="date" id="viewer-to" class="form-input" style="margin:0">
         </div>
         <div class="form-group" style="margin:0">
-          <label class="form-label">住居</label>
+          <label class="form-label">住居<span class="required">*</span></label>
           <select id="viewer-home" class="form-select" style="margin:0" onchange="updateViewerResidentFilter()">
-            <option value="">全住居</option>
           </select>
         </div>
         <div class="form-group" style="margin:0">
@@ -1046,7 +1045,10 @@
       <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
         <button class="btn btn-primary" style="flex:1;min-width:120px" onclick="searchRecords()">検索する</button>
         <button class="btn btn-secondary" id="btn-print" style="flex:1;min-width:120px;display:none" onclick="printResults()">印刷する</button>
-        <button class="btn btn-secondary" id="btn-ai-summary" style="flex:1;min-width:120px;display:none" onclick="showAiSummary()">AI要約</button>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn btn-secondary" style="width:100%;font-size:14px" onclick="showAiSummary(document.getElementById('viewer-home').value)">AI要約（直近2週間）</button>
+        <p style="font-size:11px;color:#aaa;margin:6px 0 0;text-align:center">※ クリックするたびにAPI費用が発生します。連続クリックにご注意ください。</p>
       </div>
     </div>
     <div id="viewer-results"></div>
@@ -3298,9 +3300,13 @@ function _toTimeStr(v) {
 
 function showViewer() {
   const { homes } = getSettings();
+  const validHomes = homes.filter(h => h.name);
   const sel = document.getElementById('viewer-home');
-  sel.innerHTML = '<option value="">全住居</option>' +
-    homes.filter(h => h.name).map(h => `<option value="${escHtml(h.name)}">${escHtml(h.name)}</option>`).join('');
+  sel.innerHTML = validHomes.map(h => `<option value="${escHtml(h.name)}">${escHtml(h.name)}</option>`).join('');
+  // 現在選択中のホームが一覧にあればそれを維持、なければ先頭を選択
+  if (state.selectedHome && validHomes.some(h => h.name === state.selectedHome)) {
+    sel.value = state.selectedHome;
+  }
   updateViewerResidentFilter();
   const today = new Date();
   const week = new Date(today);
@@ -3354,7 +3360,6 @@ async function searchRecords() {
     }
     _printRows = filtered;
     document.getElementById('btn-print').style.display = 'block';
-    document.getElementById('btn-ai-summary').style.display = 'block';
     renderViewerResults(filtered, container);
   } catch (e) {
     container.innerHTML = `<div style="text-align:center;padding:32px;color:#c62828">読み込みエラー: ${escHtml(e.message)}</div>`;
@@ -6090,7 +6095,7 @@ function _mdToHtml(text) {
   return out.join('');
 }
 
-async function showAiSummary() {
+async function showAiSummary(homeFilter) {
   const apiKey = localStorage.getItem('nippou_claude_apikey') || '';
   if (!apiKey) {
     showToast('設定画面でClaude APIキーを登録してください', 'error');
@@ -6098,6 +6103,17 @@ async function showAiSummary() {
   }
   if (!state.excelFileId) {
     showToast('Excelファイルに接続されていません', 'error');
+    return;
+  }
+
+  // homeFilter が未指定の場合は設定の先頭住居を使用
+  const home = homeFilter || (() => {
+    const { homes } = getSettings();
+    return homes.find(h => h.name)?.name || '';
+  })();
+
+  if (!home) {
+    showToast('住居が設定されていません', 'error');
     return;
   }
 
@@ -6113,7 +6129,7 @@ async function showAiSummary() {
   const modal      = document.getElementById('ai-summary-modal');
   const contentEl  = document.getElementById('ai-summary-content');
   const titleEl    = document.getElementById('ai-summary-title');
-  titleEl.textContent = `AI要約 ${from} 〜 ${to}`;
+  titleEl.textContent = `AI要約 ${home} / ${from} 〜 ${to}`;
   modal.style.display = 'block';
   document.body.style.overflow = 'hidden';
   contentEl.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted)">データを読み込み中...</div>';
@@ -6122,7 +6138,9 @@ async function showAiSummary() {
     const allRows = await readExcelAllRows();
     const rows = allRows.filter(r => {
       const d = _toDateStr(r.values[VH['報告日']]);
-      return d && d >= from && d <= to;
+      if (!d || d < from || d > to) return false;
+      if (r.values[VH['ホーム名']] !== home) return false;
+      return true;
     });
 
     if (!rows.length) {

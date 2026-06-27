@@ -4332,18 +4332,18 @@ async function calcFoodBudget() {
     let aCnt=0, lCnt=0, dCnt=0, rCnt=0; // 朝・昼・夕・主食のみ各count
     for (const row of rows) {
       const slot = String(row.values[VH['時間帯']] || '');
-      const shokuji = String(row.values[VH['食事内容']] || '');
-      const chushoku = String(row.values[VH['昼食準備']] || '');
+      const shokuji  = String(row.values[VH['食事内容']] || '').split('\n')[0];
+      const chushoku = String(row.values[VH['昼食準備']] || '').split('\n')[0];
 
       if (slot === '早朝') {
         if (shokuji === '提供あり') aCnt++;
-        else if (shokuji === '主食のみ') rCnt++;
+        else if (shokuji === '主食のみ提供') rCnt++;
         if (chushoku === '提供あり') lCnt++;
-        else if (chushoku === '主食のみ') rCnt++;
+        else if (chushoku === '主食のみ提供') rCnt++;
       }
       if (slot === '日中') {
         if (shokuji === '提供あり') dCnt++;
-        else if (shokuji === '主食のみ') rCnt++;
+        else if (shokuji === '主食のみ提供') rCnt++;
       }
     }
     const residentCost = aCnt*300 + lCnt*400 + dCnt*500 + rCnt*150;
@@ -4412,19 +4412,22 @@ function _buildBuyerRows(homeName) {
   let html = '';
   for (let i = 1; i <= 3; i++) {
     html += `
-      <div class="budget-buyer-row" style="display:grid;grid-template-columns:1fr 70px 90px;gap:6px;margin-bottom:6px;align-items:center">
+      <div style="display:grid;grid-template-columns:1fr 70px;gap:6px;margin-bottom:2px;align-items:center">
         <select id="budget-buyer-${i}" class="form-select" style="margin:0" onchange="updateBudgetPreview()">${opts}</select>
         <div style="position:relative">
           <input type="number" id="budget-ratio-${i}" class="form-input" min="0" max="100" value="${i===1?100:0}"
                  style="margin:0;padding-right:22px" oninput="updateBudgetPreview()">
           <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;color:#888;pointer-events:none">%</span>
         </div>
-        <select id="budget-type-${i}" class="form-select" style="margin:0;font-size:12px" onchange="updateBudgetPreview()">
-          <option value="プリペイド">プリペイド</option>
-          <option value="現金">現金</option>
-        </select>
       </div>
-      <div id="budget-amount-${i}" style="font-size:12px;color:var(--primary);text-align:right;margin-bottom:8px;padding-right:4px"></div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <div id="budget-amount-${i}" style="font-size:12px;color:var(--primary);flex:1"></div>
+        <span style="font-size:11px;color:#888;white-space:nowrap">うち現金</span>
+        <input type="number" id="budget-cash-${i}" class="form-input" min="0" step="1000" value="0"
+               style="margin:0;width:80px;font-size:12px" oninput="updateBudgetPreview()">
+        <span style="font-size:11px;color:#888">円</span>
+      </div>
+      <div style="height:6px"></div>
     `;
   }
   document.getElementById('budget-buyers').innerHTML = html;
@@ -4437,13 +4440,21 @@ function updateBudgetPreview() {
   for (let i = 1; i <= 3; i++) {
     const name  = document.getElementById(`budget-buyer-${i}`)?.value || '';
     const ratio = parseInt(document.getElementById(`budget-ratio-${i}`)?.value || '0') || 0;
-    const type  = document.getElementById(`budget-type-${i}`)?.value || '';
     totalRatio += ratio;
-    const amtEl = document.getElementById(`budget-amount-${i}`);
+    const amtEl  = document.getElementById(`budget-amount-${i}`);
+    const cashEl = document.getElementById(`budget-cash-${i}`);
     if (!amtEl) continue;
     if (name && name !== '（なし）' && ratio > 0) {
-      const amt = Math.round(budget * ratio / 100 / 1000) * 1000;
-      amtEl.textContent = `→ ${amt.toLocaleString()}円（${type}）`;
+      const amt     = Math.round(budget * ratio / 100 / 1000) * 1000;
+      const cash    = Math.min(parseInt(cashEl?.value || '0') || 0, amt);
+      const prepaid = amt - cash;
+      if (cash > 0 && prepaid > 0) {
+        amtEl.textContent = `→ ${amt.toLocaleString()}円（プリペイド ${prepaid.toLocaleString()}円 ＋ 現金 ${cash.toLocaleString()}円）`;
+      } else if (cash > 0) {
+        amtEl.textContent = `→ ${amt.toLocaleString()}円（現金）`;
+      } else {
+        amtEl.textContent = `→ ${amt.toLocaleString()}円（プリペイド）`;
+      }
     } else {
       amtEl.textContent = '';
     }
@@ -4475,10 +4486,19 @@ function generateBudgetText() {
   for (let i = 1; i <= 3; i++) {
     const name  = document.getElementById(`budget-buyer-${i}`)?.value || '';
     const ratio = parseInt(document.getElementById(`budget-ratio-${i}`)?.value || '0') || 0;
-    const type  = document.getElementById(`budget-type-${i}`)?.value || '';
     if (!name || name === '（なし）' || ratio === 0) continue;
-    const amt = Math.round(budget * ratio / 100 / 1000) * 1000;
-    lines.push(`${name}さん　${amt.toLocaleString()} 円（${type}）`);
+    const amt     = Math.round(budget * ratio / 100 / 1000) * 1000;
+    const cash    = Math.min(parseInt(document.getElementById(`budget-cash-${i}`)?.value || '0') || 0, amt);
+    const prepaid = amt - cash;
+    let detail;
+    if (cash > 0 && prepaid > 0) {
+      detail = `プリペイド ${prepaid.toLocaleString()} 円 ＋ 現金 ${cash.toLocaleString()} 円`;
+    } else if (cash > 0) {
+      detail = `現金`;
+    } else {
+      detail = `プリペイド`;
+    }
+    lines.push(`${name}さん　${amt.toLocaleString()} 円（${detail}）`);
   }
 
   // 予備費
@@ -4545,6 +4565,20 @@ const SHIFT_HOURS = {
 };
 const SHIFT_NAMES = Object.keys(SHIFT_HOURS);
 
+// 日報フォームの勤務体系値 → シフトコードへの変換マップ
+const KINMU_TO_SHIFT = {
+  '夕朝勤(14:00-翌9:00)': '夜A',
+  '夕朝勤(15:00-翌9:00)': '夜B',
+  '夕朝勤(16:00-翌9:00)': '夜C',
+  '夕朝勤(17:00-翌9:00)': '遅A',
+  '夕朝勤(18:00-翌9:00)': '遅B',
+  '夕朝勤(19:00-翌9:00)': '遅C',
+  '夕勤(14:00-21:00)':    '夕A',
+  '夕勤(15:00-21:00)':    '夕B',
+  '夕勤(16:00-21:00)':    '夕C',
+  '夕勤(17:00-21:00)':    '夕D',
+};
+
 let _jininTsv = '';
 
 function showJininScreen() {
@@ -4593,9 +4627,10 @@ async function calcJinin() {
       const shift = String(row.values[VH['勤務体系']] || '');
       if (slot !== '日中') continue;
       if (!homes.includes(home)) continue;
-      if (!SHIFT_NAMES.includes(shift)) continue;
+      const shiftCode = KINMU_TO_SHIFT[shift] || (SHIFT_NAMES.includes(shift) ? shift : null);
+      if (!shiftCode) continue;
       const key = `${home}_${date}`;
-      if (!shiftLookup[key]) shiftLookup[key] = shift;
+      if (!shiftLookup[key]) shiftLookup[key] = shiftCode;
     }
 
     // 夜間従事者: home × date → シフト名 or null
@@ -4686,19 +4721,19 @@ function _renderJininTables(homes, dates, nightData, sodaninHours, year, month) 
                 onclick="copyJininText()">コピー（TSV）</button>
       </div>
 
-      <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">夜間従事者</div>
+      <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">世話人（時間）</div>
       <div style="overflow-x:auto;margin-bottom:14px">
         <table style="${tblStyle}">
           <thead><tr><th style="${TH};text-align:left;min-width:80px">住居</th>${dayHeaders}</tr></thead>
-          <tbody>${nightRows}</tbody>
+          <tbody>${soRows}</tbody>
         </table>
       </div>
 
-      <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">世話人（時間）</div>
+      <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">夜間従事者</div>
       <div style="overflow-x:auto">
         <table style="${tblStyle}">
           <thead><tr><th style="${TH};text-align:left;min-width:80px">住居</th>${dayHeaders}</tr></thead>
-          <tbody>${soRows}</tbody>
+          <tbody>${nightRows}</tbody>
         </table>
       </div>
 
@@ -4730,18 +4765,22 @@ function renderMealCountTable(days, residents, lookup, homeName, year, month) {
     { label: '朝食',   slot: '早朝', field: '食事内容', value: '提供あり' },
     { label: '昼食',   slot: '早朝', field: '昼食準備', value: '提供あり' },
     { label: '夕食',   slot: '日中', field: '食事内容', value: '提供あり' },
-    { label: '朝食米', slot: '早朝', field: '食事内容', value: '主食のみ' },
-    { label: '昼食米', slot: '早朝', field: '昼食準備', value: '主食のみ' },
-    { label: '夕食米', slot: '日中', field: '食事内容', value: '主食のみ' },
+    { label: '朝食米', slot: '早朝', field: '食事内容', value: '主食のみ提供' },
+    { label: '昼食米', slot: '早朝', field: '昼食準備', value: '主食のみ提供' },
+    { label: '夕食米', slot: '日中', field: '食事内容', value: '主食のみ提供' },
   ];
 
   // 各利用者・各列の集計
+  // 食事内容は「提供あり\n朝食内容テキスト」のように結合保存されるため先頭行のみ比較
   const stats = residents.map(name => {
     const counts = COLS.map(col => {
       let cnt = 0;
       for (const date of days) {
         const rec = (lookup[date] || {})[col.slot]?.[name];
-        if (rec && String(rec[VH[col.field]] || '') === col.value) cnt++;
+        if (rec) {
+          const v = String(rec[VH[col.field]] || '').split('\n')[0];
+          if (v === col.value) cnt++;
+        }
       }
       return cnt;
     });

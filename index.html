@@ -890,6 +890,25 @@
           <span class="staff-count-label">職員を追加（0/11）</span>
         </button>
       </div>
+
+      <div class="card">
+        <div class="card-title">利用状況レポート</div>
+        <p style="font-size:12px;color:#888;margin:0 0 12px">住居・月を選択して利用者ごとの利用状況を一覧表示します</p>
+        <button class="btn btn-primary" onclick="showUsageScreen()">利用状況を確認する</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">食材費・日用品費計算</div>
+        <p style="font-size:12px;color:#888;margin:0 0 12px">X-2月の実績から当月食材費予算を算出し、担当者への配分定型文を生成します</p>
+        <button class="btn btn-primary" onclick="showBudgetScreen()">食材費を計算する</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">人員実績表</div>
+        <p style="font-size:12px;color:#888;margin:0 0 12px">管轄・月を選択して夜間従事者シフトと世話人勤務時間の一覧を表示します</p>
+        <button class="btn btn-primary" onclick="showJininScreen()">人員実績表を表示する</button>
+      </div>
+
     </div>
 
     <div class="card" id="card-connection">
@@ -991,6 +1010,168 @@
       </div>
     </div>
     <div id="viewer-results"></div>
+  </div>
+</div>
+
+<!-- USAGE REPORT SCREEN -->
+<div id="screen-usage" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">利用状況レポート</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+    </div>
+  </div>
+  <div class="app-content">
+    <div class="card">
+      <div class="card-title">表示条件</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">住居</label>
+          <select id="usage-home" class="form-select" style="margin:0">
+            <option value="">住居を選択</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">対象月</label>
+          <input type="month" id="usage-month" class="form-input" style="margin:0">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:12px" onclick="searchUsageReport()">表示する</button>
+    </div>
+    <!-- タブ切り替え（検索後に表示） -->
+    <div id="usage-tab-bar" style="display:none;margin-top:4px">
+      <div style="display:flex;gap:0;border-bottom:2px solid var(--border)">
+        <button id="usage-tab-status" onclick="switchUsageMode('status')"
+          style="flex:1;padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#fff;border-bottom:3px solid var(--primary);color:var(--primary);cursor:pointer">利用状況</button>
+        <button id="usage-tab-days" onclick="switchUsageMode('days')"
+          style="flex:1;padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#fff;border-bottom:3px solid transparent;color:var(--text-muted);cursor:pointer">利用日数</button>
+        <button id="usage-tab-meals" onclick="switchUsageMode('meals')"
+          style="flex:1;padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#fff;border-bottom:3px solid transparent;color:var(--text-muted);cursor:pointer">食事回数</button>
+      </div>
+    </div>
+    <div id="usage-results-status"></div>
+    <div id="usage-results-days"  style="display:none"></div>
+    <div id="usage-results-meals" style="display:none"></div>
+  </div>
+</div>
+
+<!-- BUDGET SCREEN -->
+<div id="screen-budget" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">食材費・日用品費計算</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+    </div>
+  </div>
+  <div class="app-content">
+
+    <!-- 条件設定 -->
+    <div class="card">
+      <div class="card-title">対象設定</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">住居</label>
+          <select id="budget-home" class="form-select" style="margin:0" onchange="onBudgetHomeChange()">
+            <option value="">住居を選択</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">対象月（X月）</label>
+          <input type="month" id="budget-month" class="form-input" style="margin:0">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:12px" onclick="calcFoodBudget()">食材費を計算する</button>
+    </div>
+
+    <!-- 計算結果 -->
+    <div id="budget-calc-card" class="card hidden">
+      <div class="card-title">食材費計算結果</div>
+      <div id="budget-calc-body"></div>
+    </div>
+
+    <!-- 配分設定 -->
+    <div id="budget-settings-card" class="card hidden">
+      <div class="card-title">配分設定</div>
+
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--primary)">食材費担当者（最大3名）</div>
+      <div id="budget-buyers">
+        <!-- JS で生成 -->
+      </div>
+      <div id="budget-ratio-remain" style="font-size:12px;color:#888;margin-top:4px;text-align:right"></div>
+
+      <div style="margin-top:16px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--primary)">予備費</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center">
+          <input type="number" id="budget-reserve" class="form-input" placeholder="金額（円）" min="0" step="1000"
+                 style="margin:0" oninput="updateBudgetPreview()">
+          <select id="budget-reserve-type" class="form-select" style="margin:0" onchange="updateBudgetPreview()">
+            <option value="現金">現金</option>
+            <option value="プリペイド">プリペイド</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--primary)">日用品費</div>
+        <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:6px;align-items:center;margin-bottom:6px">
+          <div>
+            <label style="font-size:11px;color:#888">現金（円）</label>
+            <input type="number" id="budget-daily-cash" class="form-input" placeholder="0" min="0" step="500"
+                   style="margin:0" oninput="updateBudgetPreview()">
+          </div>
+          <span style="font-size:13px;color:#aaa;padding-top:16px">＋</span>
+          <div>
+            <label style="font-size:11px;color:#888">プリペイド（円）</label>
+            <input type="number" id="budget-daily-prepaid" class="form-input" placeholder="0" min="0" step="500"
+                   style="margin:0" oninput="updateBudgetPreview()">
+          </div>
+        </div>
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:16px" onclick="generateBudgetText()">定型文を生成する</button>
+    </div>
+
+    <!-- 出力 -->
+    <div id="budget-output-card" class="card hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="card-title" style="margin:0">定型文</div>
+        <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="copyBudgetText()">コピー</button>
+      </div>
+      <textarea id="budget-output-text" readonly
+        style="width:100%;min-height:200px;font-size:14px;line-height:1.8;border:1px solid var(--border);border-radius:8px;padding:12px;background:#f9f9f9;resize:vertical;box-sizing:border-box;font-family:inherit"></textarea>
+    </div>
+
+  </div>
+</div>
+
+<!-- JININ SCREEN -->
+<div id="screen-jinin" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">人員実績表</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+    </div>
+  </div>
+  <div style="padding:12px">
+    <div class="card">
+      <div class="card-title">対象設定</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div>
+          <label class="form-label">管轄</label>
+          <select id="jinin-jurisdiction" class="form-select" style="margin:0">
+            <option value="">管轄を選択</option>
+            <option value="高崎管轄">高崎管轄</option>
+            <option value="群馬管轄">群馬管轄</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">対象月</label>
+          <input type="month" id="jinin-month" class="form-input" style="margin:0">
+        </div>
+      </div>
+      <button class="btn btn-primary" style="margin-top:4px" onclick="calcJinin()">表示する</button>
+    </div>
+    <div id="jinin-result"></div>
   </div>
 </div>
 
@@ -2735,7 +2916,7 @@ function clearForm() {
 // SCREEN MANAGEMENT
 // ==============================
 function showScreen(name) {
-  ['loading', 'login', 'main', 'success', 'settings', 'viewer'].forEach(s => {
+  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin'].forEach(s => {
     const el = document.getElementById(`screen-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
   });
@@ -3737,6 +3918,885 @@ async function deleteRecord(excelRow) {
   } catch (err) {
     showToast('削除エラー: ' + err.message, 'error');
   }
+}
+
+// ==============================
+// USAGE REPORT
+// ==============================
+let _usageMode = 'status'; // 'status' | 'days'
+
+function showUsageScreen() {
+  const { homes } = getSettings();
+  const sel = document.getElementById('usage-home');
+  sel.innerHTML = '<option value="">住居を選択</option>';
+  (homes || []).forEach(h => {
+    const opt = document.createElement('option');
+    opt.value = h.name;
+    opt.textContent = h.name;
+    sel.appendChild(opt);
+  });
+
+  const now = new Date();
+  document.getElementById('usage-month').value =
+    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+  document.getElementById('usage-results-status').innerHTML = '';
+  document.getElementById('usage-results-days').innerHTML = '';
+  document.getElementById('usage-results-meals').innerHTML = '';
+  document.getElementById('usage-tab-bar').style.display = 'none';
+  _usageMode = 'status';
+  showScreen('usage');
+}
+
+function switchUsageMode(mode) {
+  _usageMode = mode;
+  const TABS = ['status', 'days', 'meals'];
+  for (const t of TABS) {
+    const tab = document.getElementById(`usage-tab-${t}`);
+    const div = document.getElementById(`usage-results-${t}`);
+    if (!tab || !div) continue;
+    const active = t === mode;
+    tab.style.borderBottom = active ? '3px solid var(--primary)' : '3px solid transparent';
+    tab.style.color        = active ? 'var(--primary)' : 'var(--text-muted)';
+    div.style.display      = active ? 'block' : 'none';
+  }
+}
+
+function getKubunForMonth(kubuns, year, month) {
+  const firstDay = `${year}-${String(month).padStart(2,'0')}-01`;
+  const lastDayNum = new Date(year, month, 0).getDate();
+  const lastDay  = `${year}-${String(month).padStart(2,'0')}-${String(lastDayNum).padStart(2,'0')}`;
+  const active = (kubuns || []).filter(k => {
+    if (!k.kubun || k.kubun === '区分なし') return false;
+    const from = k.from || '0000-01-01';
+    const to   = k.to   || '9999-12-31';
+    return from <= lastDay && to >= firstDay;
+  });
+  if (!active.length) return '';
+  active.sort((a, b) => (b.from || '').localeCompare(a.from || ''));
+  return active[0].kubun;
+}
+
+function calcRiyouStatus(g, h, i) {
+  const Y = v => v === '有';
+  const N = v => v === '無';
+  const Z = v => !v || v === '';
+
+  if (Y(g) && Y(h) && Y(i)) return '宿泊';
+  if (Y(g) && Z(h) && Z(i)) return '宿泊';
+  if (Y(g) && N(h) && N(i)) return '外泊（初日）';
+  if (N(g) && N(h) && N(i)) return '外泊（中日）';
+  if (N(g) && Y(h) && Y(i)) return '外泊（最終日）';
+  if (Y(g) && Y(h) && N(i)) return '外泊（初日）';
+  if (N(g) && N(h) && Y(i)) return '外泊（最終日）';
+  if (Y(g) && N(h) && Y(i)) return '宿泊';
+  if (N(g) && Y(h) && N(i)) return '外泊（初日）';
+  return '△';
+}
+
+function mealSymbol(value) {
+  if (!value || value === '提供無し') return '';
+  if (value === '主食のみ') return '米';
+  return '●';
+}
+
+async function searchUsageReport() {
+  const homeName = document.getElementById('usage-home').value;
+  const monthVal = document.getElementById('usage-month').value;
+  const stDiv = document.getElementById('usage-results-status');
+  const dyDiv = document.getElementById('usage-results-days');
+  const mlDiv = document.getElementById('usage-results-meals');
+
+  if (!homeName) { showToast('住居を選択してください', 'error'); return; }
+  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+
+  stDiv.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">読み込み中...</div>';
+  dyDiv.innerHTML = '';
+  mlDiv.innerHTML = '';
+  document.getElementById('usage-tab-bar').style.display = 'none';
+
+  try {
+    const [y, m] = monthVal.split('-').map(Number);
+    const from = `${y}-${String(m).padStart(2,'0')}-01`;
+    const lastDay = new Date(y, m, 0).getDate();
+    const to = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+
+    const allRows = await readExcelAllRows();
+    const rows = allRows.filter(r => {
+      const d  = _toDateStr(r.values[VH['報告日']]);
+      const hn = String(r.values[VH['ホーム名']] || '');
+      return d >= from && d <= to && hn === homeName;
+    });
+
+    const { homes } = getSettings();
+    const homeObj = (homes || []).find(h => h.name === homeName);
+    // residentObjects: {name, kubuns}[]
+    const residentObjects = homeObj
+      ? (homeObj.residents || []).map(r => typeof r === 'string' ? { name: r, kubuns: [] } : r).filter(r => r.name)
+      : [...new Set(rows.map(r => String(r.values[VH['利用者名']] || '')).filter(Boolean))].map(n => ({ name: n, kubuns: [] }));
+    const residents = residentObjects.map(r => r.name);
+
+    // 日付リスト
+    const days = [];
+    for (let d = 1; d <= lastDay; d++) {
+      days.push(`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+    }
+
+    // ルックアップ: date → slot → resident → values（重複は先着優先）
+    const lookup = {};
+    for (const row of rows) {
+      const date = _toDateStr(row.values[VH['報告日']]);
+      const slot = String(row.values[VH['時間帯']] || '');
+      const name = String(row.values[VH['利用者名']] || '');
+      if (!date || !slot || !name) continue;
+      if (!lookup[date]) lookup[date] = {};
+      if (!lookup[date][slot]) lookup[date][slot] = {};
+      if (!lookup[date][slot][name]) lookup[date][slot][name] = row.values;
+    }
+
+    // 利用状況タブ
+    stDiv.innerHTML = renderUsageTable(days, residents, lookup, homeName, y, m);
+
+    // 利用日数タブ
+    dyDiv.innerHTML = renderUsageDaysTable(days, residentObjects, lookup, homeName, y, m);
+
+    // 食事回数タブ
+    mlDiv.innerHTML = renderMealCountTable(days, residents, lookup, homeName, y, m);
+
+    // タブバー表示・初期タブを現在のモードに合わせる
+    document.getElementById('usage-tab-bar').style.display = 'block';
+    switchUsageMode(_usageMode);
+
+  } catch (err) {
+    stDiv.innerHTML = `<div style="padding:16px;color:#c62828">エラー: ${escHtml(err.message)}</div>`;
+    document.getElementById('usage-tab-bar').style.display = 'none';
+  }
+}
+
+function renderUsageTable(days, residents, lookup, homeName, year, month) {
+  const DOW = ['日','月','火','水','木','金','土'];
+
+  // ヘッダー行1：利用者名
+  let th1 = '';
+  for (const r of residents) {
+    th1 += `<th colspan="4" style="text-align:center;padding:5px 4px;border-right:2px solid #bbb;border-bottom:1px solid #ddd;font-size:12px;background:#f0f4fa">${escHtml(r)}</th>`;
+  }
+
+  // ヘッダー行2：利用有無・朝・昼・夕
+  let th2 = '';
+  for (const r of residents) {
+    th2 += `
+      <th style="padding:3px 6px;border-right:1px solid #ddd;border-bottom:2px solid #bbb;font-size:11px;min-width:76px;background:#f5f5f5;text-align:center">利用有無</th>
+      <th style="padding:3px 4px;border-right:1px solid #ddd;border-bottom:2px solid #bbb;font-size:11px;min-width:28px;background:#f5f5f5;text-align:center">朝</th>
+      <th style="padding:3px 4px;border-right:1px solid #ddd;border-bottom:2px solid #bbb;font-size:11px;min-width:28px;background:#f5f5f5;text-align:center">昼</th>
+      <th style="padding:3px 4px;border-right:2px solid #bbb;border-bottom:2px solid #bbb;font-size:11px;min-width:28px;background:#f5f5f5;text-align:center">夕</th>
+    `;
+  }
+
+  // データ行
+  let tbody = '';
+  for (const date of days) {
+    const [yd, md, dd] = date.split('-').map(Number);
+    const dt = new Date(yd, md - 1, dd);
+    const dow = DOW[dt.getDay()];
+    const isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+    const dateColor = isWeekend ? 'color:#c62828' : '';
+    const rowBg = dt.getDay() === 0 ? '#fff8f8' : dt.getDay() === 6 ? '#f0f4ff' : '#fff';
+
+    let cells = '';
+    for (const residentName of residents) {
+      const dayData  = lookup[date] || {};
+      const earlyRec = dayData['早朝']?.[residentName];
+      const dayRec   = dayData['日中']?.[residentName];
+      const nightRec = dayData['夜間']?.[residentName];
+
+      const g = earlyRec ? String(earlyRec[VH['利用の有無']] || '') : '';
+      const h = dayRec   ? String(dayRec[VH['利用の有無']]   || '') : '';
+      const i = nightRec ? String(nightRec[VH['利用の有無']] || '') : '';
+
+      const hasRecord = !!(earlyRec || dayRec || nightRec);
+      const riyou = hasRecord ? calcRiyouStatus(g, h, i) : '';
+
+      // 朝=早朝の食事内容、昼=早朝の昼食準備、夕=日中の食事内容
+      const asa  = earlyRec ? mealSymbol(String(earlyRec[VH['食事内容']] || '')) : '';
+      const hiru = earlyRec ? mealSymbol(String(earlyRec[VH['昼食準備']] || '')) : '';
+      const yu   = dayRec   ? mealSymbol(String(dayRec[VH['食事内容']]   || '')) : '';
+
+      let riyouColor = '';
+      if      (riyou === '宿泊')             riyouColor = 'color:#1565c0;font-weight:600';
+      else if (riyou.startsWith('外泊'))     riyouColor = 'color:#6a1b9a;font-weight:600';
+      else if (riyou === '△')               riyouColor = 'color:#c62828';
+
+      cells += `
+        <td style="padding:4px 6px;border-right:1px solid #eee;border-bottom:1px solid #eee;font-size:11px;${riyouColor}">${escHtml(riyou)}</td>
+        <td style="text-align:center;padding:4px 3px;border-right:1px solid #eee;border-bottom:1px solid #eee;font-size:13px">${escHtml(asa)}</td>
+        <td style="text-align:center;padding:4px 3px;border-right:1px solid #eee;border-bottom:1px solid #eee;font-size:13px">${escHtml(hiru)}</td>
+        <td style="text-align:center;padding:4px 3px;border-right:2px solid #bbb;border-bottom:1px solid #eee;font-size:13px">${escHtml(yu)}</td>
+      `;
+    }
+
+    tbody += `
+      <tr style="background:${rowBg}">
+        <td style="position:sticky;left:0;z-index:1;background:${rowBg};padding:4px 8px;border-right:1px solid #ddd;border-bottom:1px solid #eee;font-size:12px;${dateColor};white-space:nowrap">${md}/${dd}</td>
+        <td style="position:sticky;left:44px;z-index:1;background:${rowBg};padding:4px 6px;border-right:2px solid #bbb;border-bottom:1px solid #eee;text-align:center;font-size:12px;${dateColor}">${dow}</td>
+        ${cells}
+      </tr>
+    `;
+  }
+
+  const legend = `
+    <div style="display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:#555;margin-top:10px;padding:8px 12px;background:#f8f9fa;border-radius:8px">
+      <span><b style="color:#1565c0">宿泊</b>：在宅</span>
+      <span><b style="color:#6a1b9a">外泊（初日）</b>：外出開始</span>
+      <span><b style="color:#6a1b9a">外泊（中日）</b>：外出継続</span>
+      <span><b style="color:#6a1b9a">外泊（最終日）</b>：外出終了</span>
+      <span style="margin-left:8px"><b>●</b>提供あり　<b>米</b>主食のみ　空欄:提供なし</span>
+    </div>
+  `;
+
+  return `
+    <div style="margin-top:12px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px">${escHtml(homeName)}　${year}年${month}月</div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:8px">
+        <table style="border-collapse:collapse;white-space:nowrap;font-family:inherit">
+          <thead>
+            <tr style="background:#f0f4fa">
+              <th rowspan="2" style="position:sticky;left:0;z-index:3;background:#f0f4fa;padding:5px 8px;border-right:1px solid #ddd;border-bottom:2px solid #bbb;min-width:44px;font-size:12px">日付</th>
+              <th rowspan="2" style="position:sticky;left:44px;z-index:3;background:#f0f4fa;padding:5px 6px;border-right:2px solid #bbb;border-bottom:2px solid #bbb;min-width:28px;font-size:12px;text-align:center">曜</th>
+              ${th1}
+            </tr>
+            <tr>${th2}</tr>
+          </thead>
+          <tbody>${tbody}</tbody>
+        </table>
+      </div>
+      ${legend}
+    </div>
+  `;
+}
+
+function renderUsageDaysTable(days, residentObjects, lookup, homeName, year, month) {
+  const COUNTED = new Set(['宿泊', '外泊（初日）', '外泊（最終日）']);
+  const KUBUN_ORDER = ['区分6','区分5','区分4','区分3','区分2','区分1','区分なし',''];
+
+  // 各利用者の利用日数と区分を計算
+  const residentStats = residentObjects.map(ro => {
+    const name  = ro.name;
+    const kubun = getKubunForMonth(ro.kubuns, year, month);
+    let count = 0;
+    for (const date of days) {
+      const dayData  = lookup[date] || {};
+      const earlyRec = dayData['早朝']?.[name];
+      const dayRec   = dayData['日中']?.[name];
+      const nightRec = dayData['夜間']?.[name];
+      const g = earlyRec ? String(earlyRec[VH['利用の有無']] || '') : '';
+      const h = dayRec   ? String(dayRec[VH['利用の有無']]   || '') : '';
+      const i = nightRec ? String(nightRec[VH['利用の有無']] || '') : '';
+      const hasRecord = !!(earlyRec || dayRec || nightRec);
+      if (hasRecord && COUNTED.has(calcRiyouStatus(g, h, i))) count++;
+    }
+    return { name, kubun, count };
+  });
+
+  // 区分順にソート
+  residentStats.sort((a, b) => {
+    const ai = KUBUN_ORDER.indexOf(a.kubun) === -1 ? 99 : KUBUN_ORDER.indexOf(a.kubun);
+    const bi = KUBUN_ORDER.indexOf(b.kubun) === -1 ? 99 : KUBUN_ORDER.indexOf(b.kubun);
+    return ai - bi;
+  });
+
+  // 個人テーブル
+  let rows = residentStats.map(s => `
+    <tr>
+      <td style="padding:7px 12px;border-bottom:1px solid #eee;font-size:13px">${escHtml(s.name)}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:center;color:#555">${escHtml(s.kubun || '—')}</td>
+      <td style="padding:7px 14px;border-bottom:1px solid #eee;font-size:14px;text-align:right;font-weight:700;color:var(--primary)">${s.count}</td>
+    </tr>
+  `).join('');
+
+  // 区分別集計
+  const kubunGroups = {
+    '区分6': 0, '区分5': 0, '区分4': 0, '区分3': 0, '区分2以下': 0
+  };
+  for (const s of residentStats) {
+    if      (s.kubun === '区分6') kubunGroups['区分6']    += s.count;
+    else if (s.kubun === '区分5') kubunGroups['区分5']    += s.count;
+    else if (s.kubun === '区分4') kubunGroups['区分4']    += s.count;
+    else if (s.kubun === '区分3') kubunGroups['区分3']    += s.count;
+    else                          kubunGroups['区分2以下'] += s.count;
+  }
+
+  const summaryHeaders = Object.keys(kubunGroups).map(k =>
+    `<th style="padding:6px 10px;font-size:12px;background:#f0f4fa;border-right:1px solid #ddd;text-align:center">${k}</th>`
+  ).join('');
+  const summaryCells = Object.entries(kubunGroups).map(([, v]) =>
+    `<td style="padding:7px 10px;font-size:14px;font-weight:700;text-align:center;color:var(--primary);border-right:1px solid #ddd">${v}</td>`
+  ).join('');
+
+  return `
+    <div style="margin-top:12px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">${escHtml(homeName)}　${year}年${month}月　利用日数</div>
+
+      <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-bottom:16px">
+        <table style="border-collapse:collapse;width:100%">
+          <thead>
+            <tr style="background:#f0f4fa">
+              <th style="padding:8px 12px;font-size:12px;text-align:left;border-bottom:2px solid #bbb;border-right:1px solid #ddd">氏名</th>
+              <th style="padding:8px 10px;font-size:12px;text-align:center;border-bottom:2px solid #bbb;border-right:1px solid #ddd">障害区分</th>
+              <th style="padding:8px 14px;font-size:12px;text-align:right;border-bottom:2px solid #bbb">利用日数</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;color:#555">各区分の利用日数合計</div>
+      <div style="border:1px solid #ddd;border-radius:8px;overflow:hidden;margin-bottom:10px">
+        <table style="border-collapse:collapse;width:100%">
+          <thead><tr>${summaryHeaders}</tr></thead>
+          <tbody><tr>${summaryCells}</tr></tbody>
+        </table>
+      </div>
+
+      <div style="font-size:11px;color:#888;padding:6px 2px">
+        ※ 利用日数 = 宿泊・外泊（初日）・外泊（最終日）の合計日数
+      </div>
+    </div>
+  `;
+}
+
+// ==============================
+// BUDGET SCREEN
+// ==============================
+let _budgetCalc = null; // { refYear, refMonth, targetYear, targetMonth, homeName, totalCost, budget }
+
+function showBudgetScreen() {
+  const { homes } = getSettings();
+  const sel = document.getElementById('budget-home');
+  sel.innerHTML = '<option value="">住居を選択</option>';
+  (homes || []).forEach(h => {
+    const opt = document.createElement('option');
+    opt.value = h.name;
+    opt.textContent = h.name;
+    sel.appendChild(opt);
+  });
+  const now = new Date();
+  document.getElementById('budget-month').value =
+    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  ['budget-calc-card','budget-settings-card','budget-output-card'].forEach(id => {
+    document.getElementById(id).classList.add('hidden');
+  });
+  _budgetCalc = null;
+  showScreen('budget');
+}
+
+function onBudgetHomeChange() {
+  ['budget-calc-card','budget-settings-card','budget-output-card'].forEach(id => {
+    document.getElementById(id).classList.add('hidden');
+  });
+  _budgetCalc = null;
+}
+
+function _refMonth(targetYear, targetMonth) {
+  let m = targetMonth - 2;
+  let y = targetYear;
+  if (m <= 0) { m += 12; y -= 1; }
+  return [y, m];
+}
+
+async function calcFoodBudget() {
+  const homeName  = document.getElementById('budget-home').value;
+  const monthVal  = document.getElementById('budget-month').value;
+  if (!homeName) { showToast('住居を選択してください', 'error'); return; }
+  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+
+  const [ty, tm] = monthVal.split('-').map(Number);
+  const [ry, rm] = _refMonth(ty, tm);
+  const from = `${ry}-${String(rm).padStart(2,'0')}-01`;
+  const lastDay = new Date(ry, rm, 0).getDate();
+  const to   = `${ry}-${String(rm).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
+
+  document.getElementById('budget-calc-card').classList.remove('hidden');
+  document.getElementById('budget-calc-body').innerHTML =
+    '<div style="color:var(--text-muted);font-size:13px">計算中...</div>';
+
+  try {
+    const allRows = await readExcelAllRows();
+    const rows = allRows.filter(r => {
+      const d  = _toDateStr(r.values[VH['報告日']]);
+      const hn = String(r.values[VH['ホーム名']] || '');
+      return d >= from && d <= to && hn === homeName;
+    });
+
+    // 居住者食事費
+    let aCnt=0, lCnt=0, dCnt=0, rCnt=0; // 朝・昼・夕・主食のみ各count
+    for (const row of rows) {
+      const slot = String(row.values[VH['時間帯']] || '');
+      const shokuji = String(row.values[VH['食事内容']] || '');
+      const chushoku = String(row.values[VH['昼食準備']] || '');
+
+      if (slot === '早朝') {
+        if (shokuji === '提供あり') aCnt++;
+        else if (shokuji === '主食のみ') rCnt++;
+        if (chushoku === '提供あり') lCnt++;
+        else if (chushoku === '主食のみ') rCnt++;
+      }
+      if (slot === '日中') {
+        if (shokuji === '提供あり') dCnt++;
+        else if (shokuji === '主食のみ') rCnt++;
+      }
+    }
+    const residentCost = aCnt*300 + lCnt*400 + dCnt*500 + rCnt*150;
+
+    // 職員食事費（早朝=朝150円、夜間=夕200円）
+    let sMorning=0, sEvening=0;
+    for (const row of rows) {
+      const slot    = String(row.values[VH['時間帯']] || '');
+      const staffM  = String(row.values[VH['職員食事']] || '');
+      if (staffM !== '有') continue;
+      if (slot === '早朝') sMorning++;
+      if (slot === '夜間') sEvening++;
+    }
+    const staffCost = sMorning*120 + sEvening*200;
+
+    const totalCost = residentCost + staffCost;
+    const budget    = Math.round(totalCost * 0.85 / 1000) * 1000;
+
+    _budgetCalc = { refYear:ry, refMonth:rm, targetYear:ty, targetMonth:tm,
+                    homeName, totalCost, budget,
+                    detail:{ aCnt, lCnt, dCnt, rCnt, sMorning, sEvening, residentCost, staffCost } };
+
+    document.getElementById('budget-calc-body').innerHTML = `
+      <div style="font-size:12px;color:#555;margin-bottom:10px">参照月：${ry}年${rm}月の実績</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:12px">
+        <tr style="background:#f5f5f5"><th colspan="3" style="padding:5px 8px;text-align:left;border-bottom:1px solid #ddd">居住者食事費</th></tr>
+        <tr><td style="padding:4px 8px;color:#555">朝食 ${aCnt}回</td><td style="padding:4px 8px;color:#555">×300円</td><td style="padding:4px 8px;text-align:right">${(aCnt*300).toLocaleString()}円</td></tr>
+        <tr><td style="padding:4px 8px;color:#555">昼食 ${lCnt}回</td><td style="padding:4px 8px;color:#555">×400円</td><td style="padding:4px 8px;text-align:right">${(lCnt*400).toLocaleString()}円</td></tr>
+        <tr><td style="padding:4px 8px;color:#555">夕食 ${dCnt}回</td><td style="padding:4px 8px;color:#555">×500円</td><td style="padding:4px 8px;text-align:right">${(dCnt*500).toLocaleString()}円</td></tr>
+        <tr><td style="padding:4px 8px;color:#555">主食のみ ${rCnt}回</td><td style="padding:4px 8px;color:#555">×150円</td><td style="padding:4px 8px;text-align:right">${(rCnt*150).toLocaleString()}円</td></tr>
+        <tr style="background:#f5f5f5"><th colspan="3" style="padding:5px 8px;text-align:left;border-top:1px solid #ddd;border-bottom:1px solid #ddd">職員食事費</th></tr>
+        <tr><td style="padding:4px 8px;color:#555">朝食 ${sMorning}回</td><td style="padding:4px 8px;color:#555">×120円</td><td style="padding:4px 8px;text-align:right">${(sMorning*120).toLocaleString()}円</td></tr>
+        <tr><td style="padding:4px 8px;color:#555">夕食 ${sEvening}回</td><td style="padding:4px 8px;color:#555">×200円</td><td style="padding:4px 8px;text-align:right">${(sEvening*200).toLocaleString()}円</td></tr>
+        <tr style="border-top:2px solid #bbb;font-weight:700">
+          <td colspan="2" style="padding:6px 8px">合計実績</td>
+          <td style="padding:6px 8px;text-align:right">${totalCost.toLocaleString()}円</td>
+        </tr>
+        <tr style="background:#e8f4ff;font-weight:700">
+          <td colspan="2" style="padding:6px 8px;color:var(--primary)">${ty}年${tm}月 食材費予算（×85%）</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--primary);font-size:15px">${budget.toLocaleString()}円</td>
+        </tr>
+      </table>
+    `;
+
+    // 担当者セレクト生成
+    _buildBuyerRows(homeName);
+    document.getElementById('budget-reserve').value = 10000;
+    document.getElementById('budget-daily-cash').value = '';
+    document.getElementById('budget-daily-prepaid').value = 10000;
+    document.getElementById('budget-settings-card').classList.remove('hidden');
+    document.getElementById('budget-output-card').classList.add('hidden');
+    updateBudgetPreview();
+
+  } catch (err) {
+    document.getElementById('budget-calc-body').innerHTML =
+      `<div style="color:#c62828;font-size:13px">エラー: ${escHtml(err.message)}</div>`;
+  }
+}
+
+function _buildBuyerRows(homeName) {
+  const { staffNames } = getSettings();
+  const homeStaff = (staffNames || []).filter(s => (s.homes||[]).includes(homeName)).map(s => s.name);
+  const opts = ['（なし）', ...homeStaff].map(n =>
+    `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
+
+  let html = '';
+  for (let i = 1; i <= 3; i++) {
+    html += `
+      <div class="budget-buyer-row" style="display:grid;grid-template-columns:1fr 70px 90px;gap:6px;margin-bottom:6px;align-items:center">
+        <select id="budget-buyer-${i}" class="form-select" style="margin:0" onchange="updateBudgetPreview()">${opts}</select>
+        <div style="position:relative">
+          <input type="number" id="budget-ratio-${i}" class="form-input" min="0" max="100" value="${i===1?100:0}"
+                 style="margin:0;padding-right:22px" oninput="updateBudgetPreview()">
+          <span style="position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:12px;color:#888;pointer-events:none">%</span>
+        </div>
+        <select id="budget-type-${i}" class="form-select" style="margin:0;font-size:12px" onchange="updateBudgetPreview()">
+          <option value="プリペイド">プリペイド</option>
+          <option value="現金">現金</option>
+        </select>
+      </div>
+      <div id="budget-amount-${i}" style="font-size:12px;color:var(--primary);text-align:right;margin-bottom:8px;padding-right:4px"></div>
+    `;
+  }
+  document.getElementById('budget-buyers').innerHTML = html;
+}
+
+function updateBudgetPreview() {
+  if (!_budgetCalc) return;
+  const budget = _budgetCalc.budget;
+  let totalRatio = 0;
+  for (let i = 1; i <= 3; i++) {
+    const name  = document.getElementById(`budget-buyer-${i}`)?.value || '';
+    const ratio = parseInt(document.getElementById(`budget-ratio-${i}`)?.value || '0') || 0;
+    const type  = document.getElementById(`budget-type-${i}`)?.value || '';
+    totalRatio += ratio;
+    const amtEl = document.getElementById(`budget-amount-${i}`);
+    if (!amtEl) continue;
+    if (name && name !== '（なし）' && ratio > 0) {
+      const amt = Math.round(budget * ratio / 100 / 1000) * 1000;
+      amtEl.textContent = `→ ${amt.toLocaleString()}円（${type}）`;
+    } else {
+      amtEl.textContent = '';
+    }
+  }
+  const rem = document.getElementById('budget-ratio-remain');
+  if (rem) {
+    const left = 100 - totalRatio;
+    rem.textContent = `割合の合計: ${totalRatio}% （残り ${left}%）`;
+    rem.style.color = left === 0 ? '#2e7d32' : '#c62828';
+  }
+}
+
+function generateBudgetText() {
+  if (!_budgetCalc) return;
+  const { targetYear: y, targetMonth: m, budget } = _budgetCalc;
+
+  // 割合チェック
+  let totalRatio = 0;
+  for (let i = 1; i <= 3; i++) {
+    totalRatio += parseInt(document.getElementById(`budget-ratio-${i}`)?.value || '0') || 0;
+  }
+  if (totalRatio !== 100) {
+    showToast(`担当者の割合合計が${totalRatio}%です。100%になるよう調整してください`, 'error');
+    return;
+  }
+
+  const lines = [];
+  // 担当者行
+  for (let i = 1; i <= 3; i++) {
+    const name  = document.getElementById(`budget-buyer-${i}`)?.value || '';
+    const ratio = parseInt(document.getElementById(`budget-ratio-${i}`)?.value || '0') || 0;
+    const type  = document.getElementById(`budget-type-${i}`)?.value || '';
+    if (!name || name === '（なし）' || ratio === 0) continue;
+    const amt = Math.round(budget * ratio / 100 / 1000) * 1000;
+    lines.push(`${name}さん　${amt.toLocaleString()} 円（${type}）`);
+  }
+
+  // 予備費
+  const reserve = parseInt(document.getElementById('budget-reserve')?.value || '0') || 0;
+  const resType = document.getElementById('budget-reserve-type')?.value || '現金';
+  if (reserve > 0) lines.push(`予備費　　${reserve.toLocaleString()} 円（${resType}）`);
+
+  // 日用品費
+  const cash    = parseInt(document.getElementById('budget-daily-cash')?.value    || '0') || 0;
+  const prepaid = parseInt(document.getElementById('budget-daily-prepaid')?.value || '0') || 0;
+  if (cash > 0 && prepaid > 0) {
+    const total = cash + prepaid;
+    lines.push(`日用品費　${total.toLocaleString()} 円（${cash.toLocaleString()} 円は現金　${prepaid.toLocaleString()}円 プリペイド）`);
+  } else if (cash > 0) {
+    lines.push(`日用品費　${cash.toLocaleString()} 円（現金）`);
+  } else if (prepaid > 0) {
+    lines.push(`日用品費　${prepaid.toLocaleString()} 円（プリペイド）`);
+  }
+
+  const text = [
+    'お世話になっております。',
+    `　${y}年${m}月の食材費と日用品費の金額をお知らせいたします。`,
+    ...lines,
+    '上記、ご確認の程、よろしくお願いいたします。'
+  ].join('\n');
+
+  document.getElementById('budget-output-text').value = text;
+  document.getElementById('budget-output-card').classList.remove('hidden');
+  document.getElementById('budget-output-card').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copyBudgetText() {
+  const ta = document.getElementById('budget-output-text');
+  navigator.clipboard.writeText(ta.value).then(() => {
+    showToast('定型文をコピーしました', 'success');
+  }).catch(() => {
+    ta.select();
+    document.execCommand('copy');
+    showToast('定型文をコピーしました', 'success');
+  });
+}
+
+// ==============================
+// JININ (人員実績表)
+// ==============================
+const JININ_JURISDICTIONS = {
+  '高崎管轄': ['下豊岡', '筑縄', '双葉', '下豊岡Ⅱ'],
+  '群馬管轄': ['玉村南玉', '伊勢崎中央', '玉村上新田', '伊勢崎連取'],
+};
+
+const SHIFT_HOURS = {
+  '夜A': { today: 8, next: 4 },
+  '夜B': { today: 7, next: 4 },
+  '夜C': { today: 6, next: 4 },
+  '遅A': { today: 5, next: 4 },
+  '遅B': { today: 4, next: 4 },
+  '遅C': { today: 3, next: 4 },
+  '短A': { today: 1, next: 4 },
+  '短B': { today: 0, next: 4 },
+  '夕A': { today: 8, next: 0 },
+  '夕B': { today: 7, next: 0 },
+  '夕C': { today: 6, next: 0 },
+  '夕D': { today: 5, next: 0 },
+};
+const SHIFT_NAMES = Object.keys(SHIFT_HOURS);
+
+let _jininTsv = '';
+
+function showJininScreen() {
+  const now = new Date();
+  document.getElementById('jinin-month').value =
+    `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('jinin-result').innerHTML = '';
+  _jininTsv = '';
+  showScreen('jinin');
+}
+
+async function calcJinin() {
+  const monthVal     = document.getElementById('jinin-month').value;
+  const jurisdiction = document.getElementById('jinin-jurisdiction').value;
+  if (!jurisdiction) { showToast('管轄を選択してください', 'error'); return; }
+  if (!monthVal)     { showToast('対象月を選択してください', 'error'); return; }
+
+  const [ty, tm] = monthVal.split('-').map(Number);
+  const homes    = JININ_JURISDICTIONS[jurisdiction];
+  const lastDay  = new Date(ty, tm, 0).getDate();
+
+  // 前月末日（初日のキャリーオーバー用）
+  let pm = tm - 1, py = ty;
+  if (pm === 0) { pm = 12; py--; }
+  const prevLastDay  = new Date(py, pm, 0).getDate();
+  const prevDateStr  = `${py}-${String(pm).padStart(2,'0')}-${String(prevLastDay).padStart(2,'0')}`;
+
+  // 当月の日付リスト
+  const dates = [];
+  for (let d = 1; d <= lastDay; d++) {
+    dates.push(`${ty}-${String(tm).padStart(2,'0')}-${String(d).padStart(2,'0')}`);
+  }
+
+  document.getElementById('jinin-result').innerHTML =
+    '<div style="color:var(--text-muted);padding:16px;font-size:13px">計算中...</div>';
+
+  try {
+    const allRows = await readExcelAllRows();
+
+    // 日中レコードから勤務体系を取得: key = "ホーム名_日付" → シフト名
+    const shiftLookup = {};
+    for (const row of allRows) {
+      const date  = _toDateStr(row.values[VH['報告日']]);
+      const home  = String(row.values[VH['ホーム名']] || '');
+      const slot  = String(row.values[VH['時間帯']] || '');
+      const shift = String(row.values[VH['勤務体系']] || '');
+      if (slot !== '日中') continue;
+      if (!homes.includes(home)) continue;
+      if (!SHIFT_NAMES.includes(shift)) continue;
+      const key = `${home}_${date}`;
+      if (!shiftLookup[key]) shiftLookup[key] = shift;
+    }
+
+    // 夜間従事者: home × date → シフト名 or null
+    const nightData = {};
+    for (const home of homes) {
+      nightData[home] = {};
+      for (const date of dates) {
+        nightData[home][date] = shiftLookup[`${home}_${date}`] || null;
+      }
+    }
+
+    // 世話人時間: home × date → 前日翌日 + 当日当日
+    const sodaninHours = {};
+    for (const home of homes) {
+      sodaninHours[home] = {};
+      for (let i = 0; i < dates.length; i++) {
+        const date = dates[i];
+        let prevNext = 0;
+        if (i === 0) {
+          const ps = shiftLookup[`${home}_${prevDateStr}`] || null;
+          prevNext = ps ? (SHIFT_HOURS[ps].next) : 0;
+        } else {
+          const ps = nightData[home][dates[i-1]];
+          prevNext = ps ? (SHIFT_HOURS[ps].next) : 0;
+        }
+        const cs = nightData[home][date];
+        const curToday = cs ? (SHIFT_HOURS[cs].today) : 0;
+        sodaninHours[home][date] = prevNext + curToday;
+      }
+    }
+
+    // TSV生成
+    const buildTsv = (label, getValue) => {
+      const header = [label, ...dates.map((_, i) => String(i+1))].join('\t');
+      const rows = homes.map(h => [h, ...dates.map(d => getValue(h, d))].join('\t'));
+      return [header, ...rows].join('\n');
+    };
+    _jininTsv = buildTsv('夜間従事者', (h, d) => nightData[h][d] || '特')
+      + '\n\n'
+      + buildTsv('世話人', (h, d) => String(sodaninHours[h][d]));
+
+    // HTML描画
+    document.getElementById('jinin-result').innerHTML =
+      _renderJininTables(homes, dates, nightData, sodaninHours, ty, tm);
+
+  } catch (err) {
+    document.getElementById('jinin-result').innerHTML =
+      `<div style="color:#c62828;padding:16px;font-size:13px">エラー: ${escHtml(err.message)}</div>`;
+  }
+}
+
+function _renderJininTables(homes, dates, nightData, sodaninHours, year, month) {
+  const TH = 'padding:3px 5px;border:1px solid #bbb;background:#f5f5f5;font-size:10px;white-space:nowrap;text-align:center;min-width:22px';
+  const TD = 'padding:3px 4px;border:1px solid #e0e0e0;font-size:10px;text-align:center';
+  const TDL = 'padding:3px 6px;border:1px solid #bbb;font-size:11px;white-space:nowrap;font-weight:600;background:#fafafa';
+
+  const dayHeaders = dates.map((_, i) => `<th style="${TH}">${i+1}</th>`).join('');
+
+  // 夜間従事者テーブル行
+  let nightRows = '';
+  for (const home of homes) {
+    const cells = dates.map(d => {
+      const s = nightData[home][d];
+      const color = s ? '' : 'color:#aaa;';
+      return `<td style="${TD};${color}">${s || '特'}</td>`;
+    }).join('');
+    nightRows += `<tr><td style="${TDL}">${escHtml(home)}</td>${cells}</tr>`;
+  }
+
+  // 世話人テーブル行
+  let soRows = '';
+  for (const home of homes) {
+    const cells = dates.map(d => {
+      const h = sodaninHours[home][d];
+      const color = h > 0 ? '' : 'color:#aaa;';
+      return `<td style="${TD};${color}">${h}</td>`;
+    }).join('');
+    soRows += `<tr><td style="${TDL}">${escHtml(home)}</td>${cells}</tr>`;
+  }
+
+  const tblStyle = 'border-collapse:collapse;min-width:100%';
+
+  return `
+    <div class="card" style="margin-top:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div class="card-title" style="margin:0">${year}年${month}月 人員実績表</div>
+        <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px"
+                onclick="copyJininText()">コピー（TSV）</button>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">夜間従事者</div>
+      <div style="overflow-x:auto;margin-bottom:14px">
+        <table style="${tblStyle}">
+          <thead><tr><th style="${TH};text-align:left;min-width:80px">住居</th>${dayHeaders}</tr></thead>
+          <tbody>${nightRows}</tbody>
+        </table>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;margin:8px 0 4px;color:var(--primary)">世話人（時間）</div>
+      <div style="overflow-x:auto">
+        <table style="${tblStyle}">
+          <thead><tr><th style="${TH};text-align:left;min-width:80px">住居</th>${dayHeaders}</tr></thead>
+          <tbody>${soRows}</tbody>
+        </table>
+      </div>
+
+      <div style="font-size:11px;color:#888;margin-top:10px">
+        ※ 世話人時間 = 前日シフトの翌日時間 + 当日シフトの当日時間
+      </div>
+    </div>
+  `;
+}
+
+function copyJininText() {
+  if (!_jininTsv) { showToast('先に表示ボタンを押してください', 'error'); return; }
+  navigator.clipboard.writeText(_jininTsv).then(() => {
+    showToast('人員実績表をコピーしました（Excelに貼り付け可）', 'success');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = _jininTsv;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('人員実績表をコピーしました（Excelに貼り付け可）', 'success');
+  });
+}
+
+function renderMealCountTable(days, residents, lookup, homeName, year, month) {
+  const COLS = [
+    { label: '朝食',   slot: '早朝', field: '食事内容', value: '提供あり' },
+    { label: '昼食',   slot: '早朝', field: '昼食準備', value: '提供あり' },
+    { label: '夕食',   slot: '日中', field: '食事内容', value: '提供あり' },
+    { label: '朝食米', slot: '早朝', field: '食事内容', value: '主食のみ' },
+    { label: '昼食米', slot: '早朝', field: '昼食準備', value: '主食のみ' },
+    { label: '夕食米', slot: '日中', field: '食事内容', value: '主食のみ' },
+  ];
+
+  // 各利用者・各列の集計
+  const stats = residents.map(name => {
+    const counts = COLS.map(col => {
+      let cnt = 0;
+      for (const date of days) {
+        const rec = (lookup[date] || {})[col.slot]?.[name];
+        if (rec && String(rec[VH[col.field]] || '') === col.value) cnt++;
+      }
+      return cnt;
+    });
+    return { name, counts };
+  });
+
+  // 列合計
+  const totals = COLS.map((_, ci) => stats.reduce((s, r) => s + r.counts[ci], 0));
+
+  // ヘッダー
+  const thCols = COLS.map(c =>
+    `<th style="padding:6px 10px;font-size:12px;background:#f0f4fa;border-right:1px solid #ddd;border-bottom:2px solid #bbb;text-align:center;min-width:52px">${c.label}</th>`
+  ).join('');
+
+  // データ行
+  const bodyRows = stats.map(s => {
+    const cells = s.counts.map(v =>
+      `<td style="padding:7px 10px;border-bottom:1px solid #eee;border-right:1px solid #eee;text-align:center;font-size:13px">${v || ''}</td>`
+    ).join('');
+    return `<tr>
+      <td style="padding:7px 12px;border-bottom:1px solid #eee;border-right:2px solid #bbb;font-size:13px;position:sticky;left:0;background:#fff">${escHtml(s.name)}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  // 合計行
+  const totalCells = totals.map(v =>
+    `<td style="padding:7px 10px;border-right:1px solid #eee;text-align:center;font-size:13px;font-weight:700;color:var(--primary)">${v || ''}</td>`
+  ).join('');
+
+  return `
+    <div style="margin-top:12px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:10px">${escHtml(homeName)}　${year}年${month}月　食事回数</div>
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:8px">
+        <table style="border-collapse:collapse;white-space:nowrap;font-family:inherit;width:100%">
+          <thead>
+            <tr style="background:#f0f4fa">
+              <th style="padding:8px 12px;font-size:12px;text-align:left;border-bottom:2px solid #bbb;border-right:2px solid #bbb;position:sticky;left:0;background:#f0f4fa;min-width:80px">氏名</th>
+              ${thCols}
+            </tr>
+          </thead>
+          <tbody>
+            ${bodyRows}
+            <tr style="background:#f5f5f5;border-top:2px solid #bbb">
+              <td style="padding:7px 12px;font-size:13px;font-weight:700;border-right:2px solid #bbb;position:sticky;left:0;background:#f5f5f5">合計</td>
+              ${totalCells}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:#888;padding:6px 2px;margin-top:6px">
+        ※ 朝食・昼食・夕食は「提供あり」、米は「主食のみ」の回数
+      </div>
+    </div>
+  `;
 }
 
 </script>

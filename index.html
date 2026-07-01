@@ -2241,6 +2241,7 @@ function selectHome(name) {
 }
 
 function selectTimeSlot(slot) {
+  if (state.timeSlot === slot) return;
   state.timeSlot = slot;
   state.residentData = {};
   clearDraft();
@@ -4176,7 +4177,7 @@ function mealSymbol(value) {
   if (!value) return '';
   const first = value.split('\n')[0].trim();
   if (!first || first === '提供無し' || first === '提供なし') return '';
-  if (first === '主食のみ') return '米';
+  if (first === '主食のみ提供' || first === '主食のみ') return '米';
   return '●';
 }
 

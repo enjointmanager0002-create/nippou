@@ -4173,8 +4173,10 @@ function calcRiyouStatus(g, h, i) {
 }
 
 function mealSymbol(value) {
-  if (!value || value === '提供無し') return '';
-  if (value === '主食のみ') return '米';
+  if (!value) return '';
+  const first = value.split('\n')[0].trim();
+  if (!first || first === '提供無し' || first === '提供なし') return '';
+  if (first === '主食のみ') return '米';
   return '●';
 }
 
@@ -4296,9 +4298,12 @@ function renderUsageTable(days, residents, lookup, homeName, year, month) {
       const riyou = hasRecord ? calcRiyouStatus(g, h, i) : '';
 
       // 朝=早朝の食事内容、昼=早朝の昼食準備、夕=日中の食事内容
-      const asa  = earlyRec ? mealSymbol(String(earlyRec[VH['食事内容']] || '')) : '';
-      const hiru = earlyRec ? mealSymbol(String(earlyRec[VH['昼食準備']] || '')) : '';
-      const yu   = dayRec   ? mealSymbol(String(dayRec[VH['食事内容']]   || '')) : '';
+      // 利用の有無が「有」の場合のみ食事マークを表示（外泊中日等は非表示）
+      const earlyRiyou = earlyRec ? String(earlyRec[VH['利用の有無']] || '') : '';
+      const dayRiyou   = dayRec   ? String(dayRec[VH['利用の有無']]   || '') : '';
+      const asa  = (earlyRec && earlyRiyou === '有') ? mealSymbol(String(earlyRec[VH['食事内容']] || '')) : '';
+      const hiru = (earlyRec && earlyRiyou === '有') ? mealSymbol(String(earlyRec[VH['昼食準備']] || '')) : '';
+      const yu   = (dayRec   && dayRiyou   === '有') ? mealSymbol(String(dayRec[VH['食事内容']]   || '')) : '';
 
       let riyouColor = '';
       if      (riyou === '宿泊')             riyouColor = 'color:#1565c0;font-weight:600';

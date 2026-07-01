@@ -1608,7 +1608,7 @@ async function afterLogin() {
 async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {}) {
   state.token = await getToken();
   const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), 30000); // 30秒でタイムアウト
+  const tid = setTimeout(() => ctrl.abort(), 60000); // 60秒でタイムアウト
   const headers = {
     'Authorization': `Bearer ${state.token}`,
     'Content-Type': 'application/json',
@@ -1627,7 +1627,7 @@ async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {
     return res.json();
   } catch (err) {
     clearTimeout(tid);
-    if (err.name === 'AbortError') throw new Error('通信がタイムアウトしました（30秒）。ネットワーク接続を確認してから再送信してください。');
+    if (err.name === 'AbortError') throw new Error('通信がタイムアウトしました（60秒）。ネットワーク接続を確認してから再送信してください。');
     throw err;
   }
 }
@@ -2789,13 +2789,19 @@ async function submitForm() {
   if (btn) btn.disabled = true;
   setLoading('保存中...');
 
-  // 部分失敗対策：送信済みの利用者をスキップするためにキーを記録
-  if (!state.submittedResidents) state.submittedResidents = new Set();
+  // 送信済みの利用者を記録（セッションをまたいでも保持）
+  if (!state.submittedResidents) {
+    try {
+      const saved = sessionStorage.getItem('nippou_sent');
+      state.submittedResidents = saved ? new Set(JSON.parse(saved)) : new Set();
+    } catch { state.submittedResidents = new Set(); }
+  }
 
   try {
     const now = new Date().toLocaleString('ja-JP');
     let savedCount = 0;
     let dupSkipped = [];
+    const failedResidents = [];
 
     // 重複チェック用に現在のExcelデータを一括取得
     const existingRows = await fetchRowsForDupCheck();
@@ -2852,15 +2858,32 @@ async function submitForm() {
         d.taijo || '',
       ];
 
-      await appendRowToExcel(row);
-      invalidateDupCache();
-      state.submittedResidents.add(batchKey);
-      savedCount++;
+      // ★ 1人ずつ個別に try-catch → 1人失敗しても残りを継続
+      try {
+        await appendRowToExcel(row);
+        invalidateDupCache();
+        state.submittedResidents.add(batchKey);
+        try { sessionStorage.setItem('nippou_sent', JSON.stringify([...state.submittedResidents])); } catch {}
+        savedCount++;
+      } catch (rowErr) {
+        console.error(`${name} 送信失敗:`, rowErr);
+        failedResidents.push(name);
+      }
     }
 
     // 重複によりスキップした利用者がいれば通知
     if (dupSkipped.length > 0) {
       showToast(`${dupSkipped.join('、')}さんはすでに記録が存在するためスキップしました。修正は記録一覧の「編集」からどうぞ。`, 'error');
+    }
+
+    // 一部送信失敗 → メイン画面に戻り再送信を促す（送信済み分は次回スキップ）
+    if (failedResidents.length > 0) {
+      showScreen('main');
+      showToast(
+        `${failedResidents.join('、')}さんの送信に失敗しました。再度「送信する」を押してください。`,
+        'error'
+      );
+      return;
     }
 
     // 送信できた利用者が0名（全員重複スキップ）なら成功画面に遷移しない
@@ -2869,9 +2892,10 @@ async function submitForm() {
       return;
     }
 
-    // 送信成功 → データをクリアして再送信を防止
+    // 全員送信成功 → データをクリア
     state.residentData = {};
     state.submittedResidents = new Set();
+    try { sessionStorage.removeItem('nippou_sent'); } catch {}
     clearDraft();
 
     document.getElementById('success-detail').textContent =

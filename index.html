@@ -2812,8 +2812,13 @@ async function submitForm() {
     let dupSkipped = [];
     const failedResidents = [];
 
-    // 重複チェック用に現在のExcelデータを一括取得
-    const existingRows = await fetchRowsForDupCheck();
+    // 重複チェック用に現在のExcelデータを一括取得（失敗しても送信は続行）
+    let existingRows = [];
+    try {
+      existingRows = await fetchRowsForDupCheck();
+    } catch (dupErr) {
+      console.warn('重複チェック取得失敗、スキップして送信を続行します:', dupErr.message);
+    }
 
     for (const r of residents) {
       const name = typeof r === 'string' ? r : r.name;
@@ -4823,6 +4828,8 @@ const KINMU_TO_SHIFT = {
   '夕勤(15:00-21:00)':    '夕B',
   '夕勤(16:00-21:00)':    '夕C',
   '夕勤(17:00-21:00)':    '夕D',
+  'S夜勤(21:00-翌9:00)':  '短A',
+  'S夜勤(22:00-翌9:00)':  '短B',
 };
 
 let _jininTsv = '';
@@ -5023,7 +5030,7 @@ async function calcJinin() {
       const slot      = String(row.values[VH['時間帯']] || '');
       const rawShift  = String(row.values[VH['勤務体系']] || '');
       const staffName = String(row.values[VH['担当職員名']] || '');
-      if (slot !== '日中') continue;
+      if (slot !== '日中' && slot !== '夜間') continue;
       if (!jurisHomes.includes(home)) continue;
       if (!seen.has(staffName)) continue;
       const shiftCode = KINMU_TO_SHIFT[rawShift] || (SHIFT_NAMES.includes(rawShift) ? rawShift : null);

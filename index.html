@@ -3102,7 +3102,7 @@ function clearForm() {
 // SCREEN MANAGEMENT
 // ==============================
 function showScreen(name) {
-  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin'].forEach(s => {
+  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice'].forEach(s => {
     const el = document.getElementById(`screen-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
   });

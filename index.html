@@ -4868,7 +4868,7 @@ function _parseCsvLine(line) {
 function _parseAttendanceCsv(text) {
   const lines = text.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return {};
-  const normName = s => s.replace(/[\s　]+/g, ' ').trim();
+  const normName = s => s.replace(/[\s　]+/g, '');
   // 出勤開始時刻(時) → シフトコード
   const OVERNIGHT_MAP = { 14:'夜A', 15:'夜B', 16:'夜C', 17:'遅A', 18:'遅B', 19:'遅C', 21:'短A', 22:'短B' };
   const EVENING_MAP   = { 14:'夕A', 15:'夕B', 16:'夕C', 17:'夕D' };
@@ -5100,8 +5100,17 @@ function _renderJininTables(staffList, dates, nightData, sodaninHours, year, mon
   const TH  = 'padding:3px 5px;border:1px solid #bbb;background:#f5f5f5;font-size:10px;white-space:nowrap;text-align:center;min-width:22px';
   const TD  = 'padding:3px 4px;border:1px solid #e0e0e0;font-size:10px;text-align:center;vertical-align:middle';
   const TDL = 'padding:3px 6px;border:1px solid #bbb;font-size:11px;white-space:nowrap;background:#fafafa';
-  const normName = s => s.replace(/[\s　]+/g, ' ').trim();
-  const hasAttend = attendLookup && Object.keys(attendLookup).length > 0;
+  const normName = s => s.replace(/[\s　]+/g, '');
+  // 登録済みデータのキーも空白除去で再正規化（旧形式「姓 名_日付」との互換のため）
+  const attendMap = {};
+  if (attendLookup) {
+    for (const [k, v] of Object.entries(attendLookup)) {
+      const i = k.lastIndexOf('_');
+      if (i < 0) continue;
+      attendMap[normName(k.slice(0, i)) + '_' + k.slice(i + 1)] = v;
+    }
+  }
+  const hasAttend = Object.keys(attendMap).length > 0;
 
   const dayHeaders = dates.map((_, i) => `<th style="${TH}">${i+1}</th>`).join('');
 
@@ -5111,7 +5120,7 @@ function _renderJininTables(staffList, dates, nightData, sodaninHours, year, mon
     const nstaff = normName(staff);
     const cells = dates.map(d => {
       const s = nightData[staff][d];
-      const aVal = hasAttend ? (attendLookup[`${nstaff}_${d}`] || null) : null;
+      const aVal = hasAttend ? (attendMap[`${nstaff}_${d}`] || null) : null;
 
       if (aVal && s && aVal !== s) {
         // 不一致：日報値を赤、勤怠値を下段に表示

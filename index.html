@@ -4870,7 +4870,7 @@ function _parseAttendanceCsv(text) {
   if (lines.length < 2) return {};
   const normName = s => s.replace(/[\s　]+/g, ' ').trim();
   // 出勤開始時刻(時) → シフトコード
-  const OVERNIGHT_MAP = { 14:'夜A', 15:'夜B', 16:'夜C', 17:'遅A', 18:'遅B', 19:'遅C' };
+  const OVERNIGHT_MAP = { 14:'夜A', 15:'夜B', 16:'夜C', 17:'遅A', 18:'遅B', 19:'遅C', 21:'短A', 22:'短B' };
   const EVENING_MAP   = { 14:'夕A', 15:'夕B', 16:'夕C', 17:'夕D' };
   const result = {};
 
@@ -4928,6 +4928,10 @@ async function handleAttendanceCsvUpload(input) {
     _saveAttendanceStore(store);
     _renderAttendanceStoredMonths();
     showToast(`勤怠データを登録しました（${months.map(m => { const [y,mo]=m.split('-'); return `${y}年${parseInt(mo)}月`; }).join('・')}）`, 'success');
+    // 人員実績表が表示中なら再描画して照合結果を反映
+    if (document.getElementById('jinin-result') && document.getElementById('jinin-result').innerHTML.trim()) {
+      renderJinin();
+    }
   } catch(e) {
     showToast(`読み込みエラー: ${e.message}`, 'error');
   }

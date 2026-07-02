@@ -1807,6 +1807,11 @@ async function loadSettingsFromCloud() {
     if (res.ok) {
       const data = await res.json();
       localStorage.setItem('nippou_settings', JSON.stringify(data));
+      // クラウド共通のClaude APIキーをこの端末にも反映（''は明示的な削除）
+      if (typeof data.claudeApiKey === 'string') {
+        if (data.claudeApiKey) localStorage.setItem('nippou_claude_apikey', data.claudeApiKey);
+        else localStorage.removeItem('nippou_claude_apikey');
+      }
     }
     // 404（初回・ファイル未作成）は無視して localStorage をそのまま使う
   } catch (e) {
@@ -1816,6 +1821,12 @@ async function loadSettingsFromCloud() {
 
 async function saveSettingsToCloud(settings) {
   try {
+    // Claude APIキーを共通設定に含めて全アカウントで共有する
+    // （呼び出し元が明示的に指定していない場合のみ、この端末のキーを引き継ぐ）
+    if (!('claudeApiKey' in settings)) {
+      const k = localStorage.getItem('nippou_claude_apikey');
+      if (k !== null) settings.claudeApiKey = k;
+    }
     await initSharepointDrive();
     const token = await getToken();
     const json = JSON.stringify(settings, null, 2);
@@ -1831,10 +1842,12 @@ async function saveSettingsToCloud(settings) {
       body: bytes
     });
     if (!res.ok) throw new Error(`設定保存エラー: ${res.status}`);
+    return true;
   } catch (e) {
     // 保存失敗時もローカルには保存済みなのでエラーのみ通知
     showToast('クラウドへの設定保存に失敗しました。ローカルには保存されています。', 'error');
     console.error('saveSettingsToCloud error:', e);
+    return false;
   }
 }
 
@@ -6025,7 +6038,7 @@ function _parseTeateAmount(typeStr) {
 // CLAUDE API / AI要約
 // ==============================
 
-function saveClaudeApiKey() {
+async function saveClaudeApiKey() {
   const key = (document.getElementById('settings-claude-apikey')?.value || '').trim();
   if (key && !key.startsWith('sk-ant-')) {
     showToast('APIキーの形式が正しくありません（sk-ant-で始まる値を入力してください）', 'error');
@@ -6033,10 +6046,17 @@ function saveClaudeApiKey() {
   }
   if (key) {
     localStorage.setItem('nippou_claude_apikey', key);
-    showToast('APIキーを保存しました', 'success');
   } else {
     localStorage.removeItem('nippou_claude_apikey');
-    showToast('APIキーを削除しました', 'success');
+  }
+  // クラウド共通設定（日報設定.json）にも保存して全アカウントで共有
+  const settings = JSON.parse(localStorage.getItem('nippou_settings') || '{}');
+  settings.claudeApiKey = key; // '' の場合は削除として全アカウントに反映
+  localStorage.setItem('nippou_settings', JSON.stringify(settings));
+  showToast(key ? 'APIキーを保存しました。クラウドに同期中...' : 'APIキーを削除しました。クラウドに同期中...', 'success');
+  const ok = await saveSettingsToCloud(settings);
+  if (ok) {
+    showToast(key ? 'APIキーを全アカウント共通設定に保存しました' : 'APIキーを削除しました（全アカウントに反映）', 'success');
   }
 }
 

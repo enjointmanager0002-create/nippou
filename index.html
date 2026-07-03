@@ -5161,9 +5161,9 @@ async function calcJinin() {
       const rows = staffList.map(s => [s, ...dates.map(d => getValue(s, d))].join('\t'));
       return [header, ...rows].join('\n');
     };
-    _jininTsv = buildTsv('夜間従事者', (s, d) => nightData[s][d] || '×')
+    _jininTsv = buildTsv('世話人', (s, d) => String(sodaninHours[s][d]))
       + '\n\n'
-      + buildTsv('世話人', (s, d) => String(sodaninHours[s][d]));
+      + buildTsv('夜間従事者', (s, d) => nightData[s][d] || '');
 
     // 勤怠照合データ読み込み
     const ymKey = `${ty}-${String(tm).padStart(2,'0')}`;

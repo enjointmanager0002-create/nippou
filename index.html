@@ -2886,7 +2886,7 @@ async function submitForm() {
         state.timeSlot,
         staffName,
         kinmu || '',
-        state.staffMeal || '',
+        state.timeSlot === '夜間' ? '' : (state.staffMeal || ''), // 夜間は職員食事の入力自体がないため常に空
         d.riyou || '',
         d.ijo || '',
         d.taichoJikan || '',
@@ -3029,7 +3029,7 @@ async function submitResident(name) {
   const row    = [
     now, date, state.selectedHome, name, slot, staffName,
     kinmu || '',
-    state.staffMeal || '',
+    slot === '夜間' ? '' : (state.staffMeal || ''), // 夜間は職員食事の入力自体がないため常に空
     d.riyou || '',
     d.ijo || '',
     d.taichoJikan || '',
@@ -4626,14 +4626,20 @@ async function calcFoodBudget() {
     }
     const residentCost = aCnt*300 + lCnt*400 + dCnt*500 + rCnt*150;
 
-    // 職員食事費（早朝=朝150円、夜間=夕200円）
+    // 職員食事費（朝食=早朝の「有」120円 / 夕食=日中の「有」200円）
+    // 日報は利用者ごとに1行あるため、職員×日×時間帯で1回だけ数える
     let sMorning=0, sEvening=0;
+    const sSeen = new Set();
     for (const row of rows) {
       const slot    = String(row.values[VH['時間帯']] || '');
       const staffM  = String(row.values[VH['職員食事']] || '');
       if (staffM !== '有') continue;
+      if (slot !== '早朝' && slot !== '日中') continue;
+      const key = `${String(row.values[VH['担当職員名']]||'')}_${_toDateStr(row.values[VH['報告日']])}_${slot}`;
+      if (sSeen.has(key)) continue;
+      sSeen.add(key);
       if (slot === '早朝') sMorning++;
-      if (slot === '夜間') sEvening++;
+      else sEvening++;
     }
     const staffCost = sMorning*120 + sEvening*200;
 
@@ -6331,7 +6337,9 @@ async function generateSrExcel() {
     const ymStr = `${ty}-${String(tm).padStart(2,'0')}`;
     const staffList = _getSrStaff();
     if (!staffList.length) { showToast('スタッフ順序が未登録です。社労士シートタブから登録してください', 'error'); return; }
-    const normN = s => String(s||'').replace(/[\s　]+/g,' ').trim();
+    // 空白を完全除去し異体字も統一して照合（スタッフ順序「鳥毛　正弘」と日報「鳥毛正弘」等の表記ゆれを吸収）
+    const SR_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
+    const normN = s => String(s||'').replace(/[\s　]+/g,'').replace(/[髙﨑嵜齋齊邊邉濵桒]/g, c => SR_FOLD[c]).trim();
 
     // 特別手当（workDate or yearEndDate が対象月）
     const teateMap = {};
@@ -6342,16 +6350,23 @@ async function generateSrExcel() {
       teateMap[n] = (teateMap[n]||0) + _parseTeateAmount(t.type);
     }
 
-    // 食事代（早朝=120, 日中=200）
+    // 食事代（朝食=早朝の「有」120円 / 夕食=日中の「有」200円。夜間は計上しない）
+    // ・「有」の記録のみ計上（「無」・空欄は対象外）
+    // ・日報は利用者ごとに1行あるため、職員×日×ホーム単位で朝食・夕食それぞれ1回だけ計上
     const mealMap = {};
+    const mealSeen = new Set();
     for (const row of monthRows) {
       const sn = normN(String(row.values[VH['担当職員名']]||''));
       if (!sn) continue;
-      const shokuji = String(row.values[VH['職員食事']]||'').trim();
-      if (!shokuji) continue;
+      if (String(row.values[VH['職員食事']]||'').trim() !== '有') continue;
       const slot = String(row.values[VH['時間帯']]||'');
-      if (!mealMap[sn]) mealMap[sn] = 0;
-      mealMap[sn] += slot === '早朝' ? 120 : 200;
+      if (slot !== '早朝' && slot !== '日中') continue; // 夜間は対象外
+      const date = _toDateStr(row.values[VH['報告日']]);
+      const home = String(row.values[VH['ホーム名']]||'');
+      const key = `${sn}_${date}_${home}_${slot}`;
+      if (mealSeen.has(key)) continue;
+      mealSeen.add(key);
+      mealMap[sn] = (mealMap[sn]||0) + (slot === '早朝' ? 120 : 200);
     }
 
     // 立替精算（tatekakin + sharyou自家用車スタッフのみ×35）

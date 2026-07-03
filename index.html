@@ -1273,10 +1273,12 @@
     <div id="invoice-tab-invoice" class="hidden" style="padding:12px">
       <div class="card">
         <div class="card-title">請求書CSV作成</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-          <div><label class="form-label">対象月</label><input type="month" id="inv-csv-month" class="form-input" style="margin:0"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:4px">
+          <div><label class="form-label">請求月（件名・請求日）</label><input type="month" id="inv-csv-month" class="form-input" style="margin:0" onchange="_syncInvDataMonth()"></div>
+          <div><label class="form-label">実績月（食事・送迎等の集計）</label><input type="month" id="inv-csv-data-month" class="form-input" style="margin:0"></div>
           <div><label class="form-label">請求書番号（開始）</label><input type="number" id="inv-csv-no" class="form-input" style="margin:0" placeholder="例:1715"></div>
         </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">実績月は請求月の前月が自動設定されます。食事回数・送迎代・貸付金はこの月の日報・Formsデータから集計されます。</div>
         <div style="margin-bottom:10px"><label class="form-label">件名テンプレート（一般住居）</label><input type="text" id="inv-csv-title" class="form-input" style="margin:0" placeholder="グループホームOne's place 利用料"></div>
         <div style="margin-bottom:10px"><label class="form-label">件名テンプレート（サテライト）</label><input type="text" id="inv-csv-title-sat" class="form-input" style="margin:0" placeholder="One's place サテライト 利用料"></div>
         <div style="margin-bottom:10px"><label class="form-label">備考（振込先情報）</label><textarea id="inv-csv-biko" class="form-input" rows="3" style="margin:0;resize:vertical"></textarea></div>
@@ -5410,11 +5412,25 @@ function _setSrStaff(d) { localStorage.setItem(INV_SR_KEY, JSON.stringify(d)); }
 
 let _invEditingId = null;
 
+function _prevMonthOf(ym) {
+  let [y, m] = ym.split('-').map(Number);
+  m--; if (m === 0) { m = 12; y--; }
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+
+function _syncInvDataMonth() {
+  const csvEl = document.getElementById('inv-csv-month');
+  const dataEl = document.getElementById('inv-csv-data-month');
+  if (csvEl?.value && dataEl) dataEl.value = _prevMonthOf(csvEl.value);
+}
+
 function showInvoiceScreen() {
   const now = new Date();
   const ym = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   const csvEl = document.getElementById('inv-csv-month');
   if (csvEl && !csvEl.value) csvEl.value = ym;
+  const dataEl = document.getElementById('inv-csv-data-month');
+  if (dataEl && !dataEl.value && csvEl?.value) dataEl.value = _prevMonthOf(csvEl.value);
   const srEl = document.getElementById('inv-sr-month');
   if (srEl && !srEl.value) srEl.value = ym;
   _loadInvCsvSettings();
@@ -5983,15 +5999,18 @@ const INV_CSV_HEADER = [
 
 async function generateInvoiceCsv() {
   const monthVal = document.getElementById('inv-csv-month')?.value;
-  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+  if (!monthVal) { showToast('請求月を選択してください', 'error'); return; }
   const [ty, tm] = monthVal.split('-').map(Number);
+  // 実績月（食事・送迎等の集計対象）。未指定なら請求月の前月
+  const dataMonthVal = document.getElementById('inv-csv-data-month')?.value || _prevMonthOf(monthVal);
+  const [dy, dm] = dataMonthVal.split('-').map(Number);
   const s = _saveInvCsvSettingsFromUI();
   const statusEl = document.getElementById('inv-csv-status');
   if (statusEl) statusEl.textContent = '日報データを取得中...';
   try {
     const allRows = await readExcelAllRows();
-    const from = `${ty}-${String(tm).padStart(2,'0')}-01`;
-    const to   = `${ty}-${String(tm).padStart(2,'0')}-${String(new Date(ty,tm,0).getDate()).padStart(2,'0')}`;
+    const from = `${dy}-${String(dm).padStart(2,'0')}-01`;
+    const to   = `${dy}-${String(dm).padStart(2,'0')}-${String(new Date(dy,dm,0).getDate()).padStart(2,'0')}`;
     const monthRows = allRows.filter(r => { const d = _toDateStr(r.values[VH['報告日']]); return d >= from && d <= to; });
     if (statusEl) statusEl.textContent = 'CSV生成中...';
     const residents = _getInvRes().filter(r => r.name);
@@ -6006,7 +6025,7 @@ async function generateInvoiceCsv() {
       const memoBase = resident.memo ? resident.memo + '。' : '';
       const memo = memoBase + (resident.mailInvoice ? s.memoPost : s.memoMail);
       const furikomi = resident.payMethod === '現金' ? s.furikomiCash : s.furikomi;
-      const items = _buildInvItems(resident, ty, tm, monthRows, formsData);
+      const items = _buildInvItems(resident, dy, dm, monthRows, formsData);
       const hdr = Array(38).fill('');
       hdr[0]='40101'; hdr[1]='請求書';
       hdr[2]=billingName; hdr[3]=title;
@@ -6038,7 +6057,7 @@ async function generateInvoiceCsv() {
     const a = document.createElement('a'); a.href = url;
     a.download = `請求書インポート_${ty}${String(tm).padStart(2,'0')}.csv`;
     a.click(); URL.revokeObjectURL(url);
-    if (statusEl) statusEl.textContent = `完了: ${residents.length}件の請求書データを生成しました（次回請求書番号: ${invoiceNo}）`;
+    if (statusEl) statusEl.textContent = `完了: ${residents.length}件の請求書データを生成しました（実績月: ${dy}年${dm}月 / 次回請求書番号: ${invoiceNo}）`;
     showToast('請求書CSVを生成しました', 'success');
   } catch(e) {
     if (statusEl) statusEl.textContent = '';
@@ -6049,7 +6068,9 @@ async function generateInvoiceCsv() {
 
 function _buildInvItems(resident, year, month, monthRows, formsData) {
   const items = [];
-  const normN = s => String(s||'').replace(/[\s　]+/g,'').trim();
+  // 異体字を統一して照合（日報と入居者登録で表記が揺れても一致させる）
+  const KANJI_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
+  const normN = s => String(s||'').replace(/[\s　]+/g,'').replace(/[髙﨑嵜齋齊邊邉濵桒]/g, c => KANJI_FOLD[c]).trim();
   const rName = normN(resident.name);
 
   // 家賃

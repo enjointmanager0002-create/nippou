@@ -6091,21 +6091,33 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
   if (resident.mailInvoice) items.push({ name: '郵送代', price: 210, qty: 2, amount: 420 });
 
   // 食事カウント（日報から）
-  const mc = { m:0,l:0,e:0,mr:0,lr:0,er:0 };
+  // 同一日・同一時間帯に複数の送信がある場合（修正の再送信等）は最新の送信のみ採用し、二重カウントを防ぐ
+  const morn = {}, noon = {};
   for (const row of monthRows) {
     if (normN(String(row.values[VH['利用者名']]||'')) !== rName) continue;
-    const slot    = String(row.values[VH['時間帯']]||'');
-    const shokuji = String(row.values[VH['食事内容']]||'').split('\n')[0].trim();
-    const chushoku= String(row.values[VH['昼食準備']]||'').split('\n')[0].trim();
-    if (slot === '早朝') {
-      if (shokuji === '提供あり') mc.m++;
-      else if (shokuji === '主食のみ提供') mc.mr++;
-      if (chushoku === '提供あり') mc.l++;
-      else if (chushoku === '主食のみ提供') mc.lr++;
-    } else if (slot === '日中') {
-      if (shokuji === '提供あり') mc.e++;
-      else if (shokuji === '主食のみ提供') mc.er++;
+    const slot = String(row.values[VH['時間帯']]||'');
+    if (slot !== '早朝' && slot !== '日中') continue;
+    const date = _toDateStr(row.values[VH['報告日']]);
+    const sent = (VH['送信日時'] != null ? row.values[VH['送信日時']] : 0) || 0;
+    const tgt = slot === '早朝' ? morn : noon;
+    if (!tgt[date] || sent >= tgt[date].sent) {
+      tgt[date] = {
+        sent,
+        shokuji:  String(row.values[VH['食事内容']]||'').split('\n')[0].trim(),
+        chushoku: String(row.values[VH['昼食準備']]||'').split('\n')[0].trim(),
+      };
     }
+  }
+  const mc = { m:0,l:0,e:0,mr:0,lr:0,er:0 };
+  for (const v of Object.values(morn)) {
+    if (v.shokuji === '提供あり') mc.m++;
+    else if (v.shokuji === '主食のみ提供') mc.mr++;
+    if (v.chushoku === '提供あり') mc.l++;
+    else if (v.chushoku === '主食のみ提供') mc.lr++;
+  }
+  for (const v of Object.values(noon)) {
+    if (v.shokuji === '提供あり') mc.e++;
+    else if (v.shokuji === '主食のみ提供') mc.er++;
   }
   const mp=resident.mealMorningPrice??300, lp=resident.mealLunchPrice??400, ep=resident.mealEveningPrice??500;
   const rp=resident.mealMorningRicePrice??150, rlp=resident.mealLunchRicePrice??150, rep=resident.mealEveningRicePrice??150;

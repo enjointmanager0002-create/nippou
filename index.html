@@ -5020,7 +5020,14 @@ function _renderAttendanceOffices() {
   const el = document.getElementById('attendance-office-filter');
   if (!el) return;
   const offices = _collectAttendOffices();
-  if (!offices.length) { el.innerHTML = ''; return; }
+  if (!offices.length) {
+    // データはあるが事業所情報がない＝旧バージョンで取り込んだデータ
+    const hasData = Object.keys(_getAttendanceStore()).length > 0;
+    el.innerHTML = hasData
+      ? '<div style="font-size:11px;color:#e65100">※ 事業所別の絞り込みを使うには、登録済みデータを削除してCSVを再アップロードしてください</div>'
+      : '';
+    return;
+  }
   const excluded = _getAttendOfficeExcluded();
   el.innerHTML =
     `<div style="font-size:12px;font-weight:600;margin-bottom:4px">照合対象の事業所（チェックした事業所の勤怠のみ照合）</div>

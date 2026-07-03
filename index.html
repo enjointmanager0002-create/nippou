@@ -1223,6 +1223,7 @@
         勤怠システムのCSV（日次勤怠レポート）をアップロードすると、日報データとの差異を赤でハイライトします。一度登録すれば保存されます。
       </div>
       <div id="attendance-stored-months" style="margin-bottom:10px"></div>
+      <div id="attendance-office-filter" style="margin-bottom:10px"></div>
       <label class="btn btn-secondary" style="width:auto;padding:6px 16px;font-size:12px;display:inline-block;cursor:pointer">
         CSVをアップロード
         <input type="file" accept=".csv" id="attendance-file-input" style="display:none" onchange="handleAttendanceCsvUpload(this)">
@@ -1251,10 +1252,15 @@
 
     <!-- 入居者情報タブ -->
     <div id="invoice-tab-residents" style="padding:12px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap">
         <div style="font-size:14px;font-weight:700">入居者情報</div>
-        <button class="btn btn-primary" style="width:auto;padding:6px 16px;font-size:12px" onclick="editInvResident(null)">＋ 追加</button>
+        <div style="display:flex;gap:8px">
+          <input type="file" id="inv-res-csv-input" accept=".csv" style="display:none" onchange="handleInvResidentsCsvUpload(this)">
+          <button class="btn btn-secondary" style="width:auto;padding:6px 16px;font-size:12px" onclick="document.getElementById('inv-res-csv-input').click()">CSV取込</button>
+          <button class="btn btn-primary" style="width:auto;padding:6px 16px;font-size:12px" onclick="editInvResident(null)">＋ 追加</button>
+        </div>
       </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px">CSV取込: 請求書作成データのExcelを「名前を付けて保存 → CSV（UTF-8またはShift-JIS）」で保存したファイルを読み込めます。同じ氏名は上書き更新されます。</div>
       <div id="inv-residents-list"></div>
     </div>
 
@@ -1299,10 +1305,13 @@
         <div class="card-title">スタッフ順序設定</div>
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">社労士から指定された順番で登録。個人コードと氏名をセットで入力してください。</div>
         <div id="sr-staff-list" style="margin-bottom:10px"></div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="addSrStaffRow()">＋ 追加</button>
+          <input type="file" id="sr-staff-csv-input" accept=".csv" style="display:none" onchange="handleSrStaffCsvUpload(this)">
+          <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="document.getElementById('sr-staff-csv-input').click()">CSV取込</button>
           <button class="btn btn-primary" style="width:auto;padding:6px 14px;font-size:12px" onclick="saveSrStaff()">保存</button>
         </div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:8px">CSV取込: 「個人コード」「氏名」の2列のCSV（Excelから名前を付けて保存→CSVでOK）。CSVの並び順のまま全件置き換えます。</div>
       </div>
     </div>
   </div>
@@ -4919,8 +4928,11 @@ function _parseAttendanceCsv(text) {
     const shiftCode = isOvernight ? OVERNIGHT_MAP[startHour] : EVENING_MAP[startHour];
     if (!shiftCode) continue;
 
+    // パターン先頭の事業所名（例:「南玉 夕朝 15時半」→「南玉」）を保持し、照合対象の絞り込みに使う
+    const office = pattern.split(/[\s　]+/)[0] || '';
+
     if (!result[yearMonth]) result[yearMonth] = {};
-    result[yearMonth][`${name}_${isoDate}`] = shiftCode;
+    result[yearMonth][`${name}_${isoDate}`] = { s: shiftCode, o: office };
   }
   return result;
 }
@@ -4967,6 +4979,7 @@ function _renderAttendanceStoredMonths() {
   const months = Object.keys(store).sort();
   if (!months.length) {
     el.innerHTML = '<div style="font-size:12px;color:var(--text-muted)">登録済みデータなし</div>';
+    _renderAttendanceOffices();
     return;
   }
   el.innerHTML = months.map(ym => {
@@ -4979,6 +4992,56 @@ function _renderAttendanceStoredMonths() {
               onclick="deleteAttendanceData('${ym}')">削除</button>
     </div>`;
   }).join('');
+  _renderAttendanceOffices();
+}
+
+// ---- 照合対象の事業所フィルタ ----
+const ATTEND_OFFICE_EXCL_KEY = 'nippou_attendance_office_excluded';
+function _getAttendOfficeExcluded() {
+  return JSON.parse(localStorage.getItem(ATTEND_OFFICE_EXCL_KEY) || '[]');
+}
+function _setAttendOfficeExcluded(list) {
+  localStorage.setItem(ATTEND_OFFICE_EXCL_KEY, JSON.stringify(list));
+}
+
+// 登録済み勤怠データから事業所名を収集
+function _collectAttendOffices() {
+  const store = _getAttendanceStore();
+  const offices = new Set();
+  for (const ym of Object.keys(store)) {
+    for (const v of Object.values(store[ym])) {
+      if (v && typeof v === 'object' && v.o) offices.add(v.o);
+    }
+  }
+  return Array.from(offices).sort();
+}
+
+function _renderAttendanceOffices() {
+  const el = document.getElementById('attendance-office-filter');
+  if (!el) return;
+  const offices = _collectAttendOffices();
+  if (!offices.length) { el.innerHTML = ''; return; }
+  const excluded = _getAttendOfficeExcluded();
+  el.innerHTML =
+    `<div style="font-size:12px;font-weight:600;margin-bottom:4px">照合対象の事業所（チェックした事業所の勤怠のみ照合）</div>
+     <div style="display:flex;gap:12px;flex-wrap:wrap">` +
+    offices.map(o => `
+      <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+        <input type="checkbox" ${excluded.includes(o) ? '' : 'checked'}
+               onchange="toggleAttendOffice('${escHtml(o)}', this.checked)">
+        ${escHtml(o)}
+      </label>`).join('') +
+    `</div>`;
+}
+
+function toggleAttendOffice(office, checked) {
+  let excluded = _getAttendOfficeExcluded();
+  if (checked) excluded = excluded.filter(o => o !== office);
+  else if (!excluded.includes(office)) excluded.push(office);
+  _setAttendOfficeExcluded(excluded);
+  // 人員実績表が表示中なら再照合して反映
+  const res = document.getElementById('jinin-result');
+  if (res && res.innerHTML.trim()) renderJinin();
 }
 
 function showJininScreen() {
@@ -5115,12 +5178,18 @@ function _renderJininTables(staffList, dates, nightData, sodaninHours, year, mon
   const TDL = 'padding:3px 6px;border:1px solid #bbb;font-size:11px;white-space:nowrap;background:#fafafa';
   const normName = s => s.replace(/[\s　]+/g, '');
   // 登録済みデータのキーも空白除去で再正規化（旧形式「姓 名_日付」との互換のため）
+  // 値は新形式 {s:シフト, o:事業所} と旧形式（文字列）の両方に対応し、
+  // チェックを外した事業所の勤怠は照合対象から除外する
+  const excludedOffices = _getAttendOfficeExcluded();
   const attendMap = {};
   if (attendLookup) {
     for (const [k, v] of Object.entries(attendLookup)) {
       const i = k.lastIndexOf('_');
       if (i < 0) continue;
-      attendMap[normName(k.slice(0, i)) + '_' + k.slice(i + 1)] = v;
+      const shift  = (v && typeof v === 'object') ? v.s : v;
+      const office = (v && typeof v === 'object') ? (v.o || '') : '';
+      if (office && excludedOffices.includes(office)) continue;
+      attendMap[normName(k.slice(0, i)) + '_' + k.slice(i + 1)] = shift;
     }
   }
   const hasAttend = Object.keys(attendMap).length > 0;
@@ -5529,6 +5598,138 @@ function deleteInvResident(id) {
   _setInvRes(_getInvRes().filter(r => r.id !== id));
   _renderInvResidents();
   showToast('削除しました', 'success');
+}
+
+// ---------- 入居者情報 CSV取込 ----------
+// 引用符内の改行・カンマに対応したCSV全体パーサ
+function _parseCsvFull(text) {
+  const rows = [];
+  let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i+1] === '"') { cur += '"'; i++; }
+        else inQ = false;
+      } else cur += c;
+    } else if (c === '"') {
+      inQ = true;
+    } else if (c === ',') {
+      row.push(cur); cur = '';
+    } else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i+1] === '\n') i++;
+      row.push(cur); cur = '';
+      if (row.some(v => v.trim() !== '')) rows.push(row);
+      row = [];
+    } else cur += c;
+  }
+  row.push(cur);
+  if (row.some(v => v.trim() !== '')) rows.push(row);
+  return rows;
+}
+
+async function handleInvResidentsCsvUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const buffer = await file.arrayBuffer();
+    let text;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch (_) {
+      text = new TextDecoder('shift-jis').decode(buffer);
+    }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // BOM除去
+
+    const rows = _parseCsvFull(text);
+    if (rows.length < 2) { showToast('データ行がありません', 'error'); return; }
+
+    // ヘッダー名 → 列番号
+    const header = rows[0].map(h => h.replace(/[\s　]+/g, ''));
+    const col = name => header.indexOf(name.replace(/[\s　]+/g, ''));
+    const iName = col('氏名');
+    if (iName < 0) { showToast('「氏名」列が見つかりません。請求書作成データのCSVか確認してください', 'error'); return; }
+
+    const gv = (r, name) => { const i = col(name); return i >= 0 ? String(r[i] ?? '').trim() : ''; };
+    const gn = (r, name) => { const v = gv(r, name).replace(/[,，円]/g, ''); const n = Number(v); return isNaN(n) ? 0 : n; };
+
+    const residents = _getInvRes();
+    let added = 0, updated = 0, skipped = 0;
+    const needMoneyMgmt = [];
+
+    for (let ri = 1; ri < rows.length; ri++) {
+      const r = rows[ri];
+      const name = String(r[iName] ?? '').trim();
+      if (!name || name === '不在') { skipped++; continue; }
+
+      const existing = residents.find(x => x.name === name);
+      const base = existing || {
+        // 新規時のデフォルト（手入力フォームと同じ）
+        salutation: '様',
+        mealMorningPrice: 300, mealLunchPrice: 400, mealEveningPrice: 500,
+        mealMorningRicePrice: 150, mealLunchRicePrice: 150, mealEveningRicePrice: 150,
+        moneyMgmtAmt: 0,
+      };
+
+      // 金銭管理: 「◯◯円」表記があれば金額を採用、それ以外は手動設定が必要
+      const mmText = gv(r, '金銭管理の有無') + ' ' + gv(r, '金銭管理の詳細');
+      const mmMatch = mmText.match(/(\d{3,6})円/);
+      const hasMoneyMgmt = gv(r, '金銭管理の有無') && !gv(r, '金銭管理の有無').includes('なし');
+      if (hasMoneyMgmt && mmMatch) base.moneyMgmtAmt = parseInt(mmMatch[1]);
+      if (hasMoneyMgmt && !mmMatch && !base.moneyMgmtAmt) needMoneyMgmt.push(name);
+
+      const memoRaw = gv(r, 'メモ');
+      const payRaw = gv(r, '支払方法');
+
+      const rec = Object.assign({}, base, {
+        id: existing ? existing.id : String(Date.now()) + '_' + ri,
+        name,
+        home: gv(r, '住居名') || base.home || '',
+        type: (gv(r, '種別').includes('サテライト')) ? 'サテライト' : '一般',
+        billingName: gv(r, '請求書宛名') || name,
+        payMethod: payRaw.includes('引落') ? '口座引落' : (payRaw.includes('自分') ? '自分で支払い' : (payRaw.includes('現金') ? '現金' : (base.payMethod || '口座引落'))),
+        zip: gv(r, '郵便番号'),
+        pref: gv(r, '都道府県') || '群馬県',
+        addr1: gv(r, '住所1'),
+        addr2: gv(r, '住所2'),
+        // 「請求書領収書は郵送/メール」は郵送有無フラグと重複するためメモには入れない
+        memo: /請求書領収書は(メール|郵送)/.test(memoRaw) ? '' : memoRaw,
+        rent: gn(r, '家賃'),
+        rentSubsidy: gn(r, '家賃※家賃補助1万円適応後'),
+        utility: gn(r, '光熱費'),
+        supplies: gn(r, '日用品費'),
+        benefitBurden: gv(r, '給付費負担の有無') === 'あり',
+        mailInvoice: gv(r, '請求書領収書の郵送の有無') === 'あり',
+        adjustment: gn(r, '水道光熱費・日用品費の清算'),
+        adjustmentDetail: gv(r, '精算の詳細'),
+        extraItem1: gv(r, 'イレギュラー品目①'), extraPrice1: gn(r, '単価①'), extraQty1: gn(r, '数量①') || 1,
+        extraItem2: gv(r, 'イレギュラー品目②'), extraPrice2: gn(r, '単価②'), extraQty2: gn(r, '数量②') || 1,
+      });
+
+      if (existing) {
+        residents[residents.indexOf(existing)] = rec;
+        updated++;
+      } else {
+        residents.push(rec);
+        added++;
+      }
+    }
+
+    _setInvRes(residents);
+    _renderInvResidents();
+    let msg = `CSV取込完了: 新規${added}名・更新${updated}名`;
+    if (skipped) msg += `・スキップ${skipped}行（不在・空行）`;
+    showToast(msg, 'success');
+    if (needMoneyMgmt.length) {
+      setTimeout(() => alert(
+        `以下の方は金銭管理ありですが金額が読み取れませんでした。\n編集画面で「金銭管理料」を手動設定してください。\n\n${needMoneyMgmt.join('、')}`
+      ), 300);
+    }
+  } catch (e) {
+    showToast(`CSV読み込みエラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+  input.value = '';
 }
 
 // ---------- Formsデータ ----------
@@ -5954,6 +6155,55 @@ function saveSrStaff() {
   }
   _setSrStaff(staff);
   showToast('スタッフ順序を保存しました', 'success');
+}
+
+async function handleSrStaffCsvUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const buffer = await file.arrayBuffer();
+    let text;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    } catch (_) {
+      text = new TextDecoder('shift-jis').decode(buffer);
+    }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1); // BOM除去
+
+    const rows = _parseCsvFull(text);
+    if (rows.length < 2) { showToast('データ行がありません', 'error'); return; }
+
+    // ヘッダーは空白除去して照合（「氏　　名」→「氏名」）
+    const header = rows[0].map(h => h.replace(/[\s　]+/g, ''));
+    const iCode = header.indexOf('個人コード');
+    const iName = header.indexOf('氏名');
+    if (iCode < 0 || iName < 0) {
+      showToast('「個人コード」「氏名」の列が見つかりません', 'error');
+      return;
+    }
+
+    const staff = [];
+    for (let ri = 1; ri < rows.length; ri++) {
+      const code = String(rows[ri][iCode] ?? '').trim();
+      const name = String(rows[ri][iName] ?? '').trim();
+      if (!code && !name) continue;
+      staff.push({ code, name });
+    }
+    if (!staff.length) { showToast('登録できる行がありません', 'error'); return; }
+
+    const current = _getSrStaff();
+    if (current.length && !confirm(`現在登録済みの${current.length}名を、CSVの${staff.length}名（CSVの並び順）で置き換えます。よろしいですか？`)) {
+      input.value = '';
+      return;
+    }
+    _setSrStaff(staff);
+    _renderSrStaff();
+    showToast(`スタッフ順序を登録しました（${staff.length}名）`, 'success');
+  } catch (e) {
+    showToast(`CSV読み込みエラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+  input.value = '';
 }
 
 async function generateSrExcel() {

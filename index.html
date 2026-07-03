@@ -5562,6 +5562,16 @@ function editInvResident(id) {
         <div><label class="form-label">単価②</label><input type="number" id="invf-ex2price" class="form-input" style="margin:0" value="${t.extraPrice2||0}"></div>
         <div><label class="form-label">数量②</label><input type="number" id="invf-ex2qty" class="form-input" style="margin:0" value="${t.extraQty2||1}"></div>
       </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px">
+        <div><label class="form-label">イレギュラー品目③</label><input id="invf-ex3name" class="form-input" style="margin:0" value="${escHtml(t.extraItem3||'')}"></div>
+        <div><label class="form-label">単価③</label><input type="number" id="invf-ex3price" class="form-input" style="margin:0" value="${t.extraPrice3||0}"></div>
+        <div><label class="form-label">数量③</label><input type="number" id="invf-ex3qty" class="form-input" style="margin:0" value="${t.extraQty3||1}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:8px">
+        <div><label class="form-label">イレギュラー品目④</label><input id="invf-ex4name" class="form-input" style="margin:0" value="${escHtml(t.extraItem4||'')}"></div>
+        <div><label class="form-label">単価④</label><input type="number" id="invf-ex4price" class="form-input" style="margin:0" value="${t.extraPrice4||0}"></div>
+        <div><label class="form-label">数量④</label><input type="number" id="invf-ex4qty" class="form-input" style="margin:0" value="${t.extraQty4||1}"></div>
+      </div>
     </div>
   `;
   document.getElementById('inv-resident-modal').style.display = 'block';
@@ -5589,6 +5599,8 @@ function saveInvResident() {
     adjustment: gn('invf-adj'), adjustmentDetail: gv('invf-adjDetail'),
     extraItem1: gv('invf-ex1name'), extraPrice1: gn('invf-ex1price'), extraQty1: gn('invf-ex1qty'),
     extraItem2: gv('invf-ex2name'), extraPrice2: gn('invf-ex2price'), extraQty2: gn('invf-ex2qty'),
+    extraItem3: gv('invf-ex3name'), extraPrice3: gn('invf-ex3price'), extraQty3: gn('invf-ex3qty'),
+    extraItem4: gv('invf-ex4name'), extraPrice4: gn('invf-ex4price'), extraQty4: gn('invf-ex4qty'),
   };
   if (!r.name) { showToast('氏名を入力してください', 'error'); return; }
   const residents = _getInvRes();
@@ -5711,6 +5723,8 @@ async function handleInvResidentsCsvUpload(input) {
         adjustmentDetail: gv(r, '精算の詳細'),
         extraItem1: gv(r, 'イレギュラー品目①'), extraPrice1: gn(r, '単価①'), extraQty1: gn(r, '数量①') || 1,
         extraItem2: gv(r, 'イレギュラー品目②'), extraPrice2: gn(r, '単価②'), extraQty2: gn(r, '数量②') || 1,
+        extraItem3: gv(r, 'イレギュラー品目③'), extraPrice3: gn(r, '単価③'), extraQty3: gn(r, '数量③') || 1,
+        extraItem4: gv(r, 'イレギュラー品目④'), extraPrice4: gn(r, '単価④'), extraQty4: gn(r, '数量④') || 1,
       });
 
       if (existing) {
@@ -6115,6 +6129,12 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
   }
   if (resident.extraItem2 && resident.extraQty2 > 0) {
     items.push({ name:resident.extraItem2, price:resident.extraPrice2, qty:resident.extraQty2, amount:(resident.extraPrice2||0)*(resident.extraQty2||0) });
+  }
+  if (resident.extraItem3 && resident.extraQty3 > 0) {
+    items.push({ name:resident.extraItem3, price:resident.extraPrice3, qty:resident.extraQty3, amount:(resident.extraPrice3||0)*(resident.extraQty3||0) });
+  }
+  if (resident.extraItem4 && resident.extraQty4 > 0) {
+    items.push({ name:resident.extraItem4, price:resident.extraPrice4, qty:resident.extraQty4, amount:(resident.extraPrice4||0)*(resident.extraQty4||0) });
   }
   return items;
 }

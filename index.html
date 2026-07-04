@@ -780,7 +780,7 @@
 
       <div class="form-group">
         <label class="form-label">報告日<span class="required">*</span></label>
-        <input type="date" id="input-date" class="form-input" required>
+        <input type="date" id="input-date" class="form-input" required onchange="_renderInputSummary()">
       </div>
 
       <div class="form-group">
@@ -803,6 +803,14 @@
           </button>
         </div>
       </div>
+    </div>
+
+    <!-- 当月入力状況ミニサマリー -->
+    <div class="card hidden" id="input-summary-card" style="padding:10px 12px">
+      <details open>
+        <summary style="cursor:pointer;font-size:13px;font-weight:700;color:var(--primary)">今月の入力状況（◯✕クリックで確認・入力）</summary>
+        <div id="input-summary-body" style="margin-top:8px"></div>
+      </details>
     </div>
 
     <!-- Staff Card -->
@@ -1605,13 +1613,17 @@ async function afterLogin() {
     loadSettings();
     initForm();
     showScreen('main');
+    // 別タブジャンプ（?jump=view/input）の処理。ジャンプした場合は後続のフォーム初期化をスキップ
+    const jumped = await _handleJumpParams();
     // 設定のクラウド同期はバックグラウンドで実行（タイムアウトしてもUI表示を妨げない）
     loadSettingsFromCloud().then(() => {
       loadSettings();
-      initForm();
-      checkAndOfferDraftRestore();
+      if (!jumped) {
+        initForm();
+        checkAndOfferDraftRestore();
+      }
     }).catch(() => {
-      checkAndOfferDraftRestore();
+      if (!jumped) checkAndOfferDraftRestore();
     });
   } catch (err) {
     console.error(err);
@@ -2277,6 +2289,97 @@ function selectHome(name) {
   renderResidents();
   populateStaffDropdown('');
   updateSubmitState();
+  _renderInputSummary();
+}
+
+// ---- 記入画面の当月入力状況ミニサマリー ----
+let _inputSummarySeq = 0;
+async function _renderInputSummary() {
+  const card = document.getElementById('input-summary-card');
+  const body = document.getElementById('input-summary-body');
+  if (!card || !body) return;
+  const home = state.selectedHome;
+  if (!home) { card.classList.add('hidden'); return; }
+  card.classList.remove('hidden');
+  const seq = ++_inputSummarySeq;
+  body.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:6px">読み込み中...</div>';
+  try {
+    const dateVal = document.getElementById('input-date').value || new Date().toISOString().slice(0, 10);
+    const ym = dateVal.slice(0, 7);
+    const [yy, mm] = ym.split('-').map(Number);
+    const lastDay = new Date(yy, mm, 0).getDate();
+    const todayStr = new Date().toISOString().slice(0, 10);
+
+    const normHm = s => String(s || '').replace(/[\s　]+/g, '').replace(/住居$/, '');
+    const all = await fetchRowsForDupCheck();
+    if (seq !== _inputSummarySeq) return; // 別の住居選択が走った場合は破棄
+    const homeRows = all.filter(r =>
+      normHm(r.values[VH['ホーム名']]) === normHm(home) &&
+      _toDateStr(r.values[VH['報告日']]).startsWith(ym));
+
+    // 登録済み利用者
+    const { homes } = getSettings();
+    const homeDef = (homes || []).find(h => normHm(h.name) === normHm(home));
+    const residents = (homeDef?.residents || []).map(r => r.name || r).filter(Boolean);
+    if (!residents.length) { body.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:6px">利用者が登録されていません</div>'; return; }
+
+    // key: date_slot_name → 件数
+    const cnt = {};
+    for (const r of homeRows) {
+      const key = `${_toDateStr(r.values[VH['報告日']])}_${String(r.values[VH['時間帯']]||'')}_${String(r.values[VH['利用者名']]||'')}`;
+      cnt[key] = (cnt[key] || 0) + 1;
+    }
+
+    const SLOTS = ['早朝', '日中', '夜間'];
+    const SHORT = { '早朝': '早', '日中': '日', '夜間': '夜' };
+    const TH = 'padding:2px 3px;font-size:10px;background:#f5f5f5;text-align:center;border:1px solid #eee';
+    const days = [];
+    for (let d = 1; d <= lastDay; d++) days.push(`${ym}-${String(d).padStart(2, '0')}`);
+
+    const dayHead = days.map(d => `<th style="${TH}">${parseInt(d.slice(8))}</th>`).join('');
+    let tbody = '';
+    for (const nm of residents) {
+      for (let si = 0; si < SLOTS.length; si++) {
+        const slot = SLOTS[si];
+        const cells = days.map(d => {
+          const c = cnt[`${d}_${slot}_${nm}`] || 0;
+          const future = d > todayStr;
+          const attr = `data-d="${d}" data-s="${slot}" data-n="${escHtml(nm)}" data-has="${c > 0 ? 1 : 0}" onclick="_inputSummaryCellClick(this)"`;
+          if (c > 1) return `<td ${attr} style="text-align:center;font-size:11px;color:#c62828;font-weight:700;background:#fce4ec;border:1px solid #eee;cursor:pointer" title="重複あり。クリックで確認">✕</td>`;
+          if (c === 1) return `<td ${attr} style="text-align:center;font-size:12px;color:#1565c0;font-weight:700;border:1px solid #eee;cursor:pointer" title="記録あり。クリックで確認">◯</td>`;
+          if (future) return `<td style="border:1px solid #eee;background:#fafafa"></td>`;
+          return `<td ${attr} style="text-align:center;font-size:11px;color:#c62828;font-weight:700;background:#fff5f5;border:1px solid #eee;cursor:pointer" title="記録なし。クリックで入力">✕</td>`;
+        }).join('');
+        const nameCell = si === 0
+          ? `<td rowspan="3" style="position:sticky;left:0;background:#fff;font-size:11px;font-weight:700;padding:2px 4px;border:1px solid #ddd;white-space:nowrap;vertical-align:middle">${escHtml(nm)}</td>`
+          : '';
+        tbody += `<tr>${nameCell}<td style="font-size:10px;padding:2px 3px;border:1px solid #eee;color:#888">${SHORT[slot]}</td>${cells}</tr>`;
+      }
+    }
+    body.innerHTML = `
+      <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #eee;border-radius:6px">
+        <table style="border-collapse:collapse;white-space:nowrap">
+          <thead><tr><th style="${TH};position:sticky;left:0;z-index:1">利用者</th><th style="${TH}">帯</th>${dayHead}</tr></thead>
+          <tbody>${tbody}</tbody>
+        </table>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">◯=記録あり ✕=未入力（クリックで報告日・時間帯をセット） ピンク=重複</div>`;
+  } catch (e) {
+    if (seq === _inputSummarySeq) body.innerHTML = `<div style="font-size:12px;color:#c62828;padding:6px">読み込みエラー: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ミニサマリーのセルクリック: 記録あり→閲覧を別タブで開く / 未入力→この画面に日付・時間帯をセット
+function _inputSummaryCellClick(el) {
+  const { d, s, n, has } = el.dataset;
+  if (has === '1') {
+    _openViewTab(d, n);
+    return;
+  }
+  document.getElementById('input-date').value = d;
+  if (state.timeSlot !== s) selectTimeSlot(s);
+  showToast(`${d}（${s}）をセットしました。${n}さんの記録を入力してください`, 'info');
+  document.getElementById('card-residents')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function selectTimeSlot(slot) {
@@ -3533,11 +3636,63 @@ function switchViewMode(mode) {
   renderViewerResults(_printRows, container);
 }
 
-// サマリーのセルクリック: 記録あり→その日の一覧で確認 / 記録なし→新規入力へ
+// ---- 別タブで開く（URLパラメータでジャンプ先を指定） ----
+function _openViewTab(date, name) {
+  const q = new URLSearchParams({ jump: 'view', date });
+  if (name) q.set('name', name);
+  window.open(location.pathname + '?' + q.toString(), '_blank');
+}
+
+function _openInputTab(date, slot, residentName) {
+  // 住居の特定: 閲覧画面の住居フィルタ → なければ設定から利用者の所属住居を検索
+  let home = document.getElementById('viewer-home')?.value || '';
+  if (!home) {
+    const { homes } = getSettings();
+    const h = (homes || []).find(hh => (hh.residents || []).some(r => (r.name || r) === residentName));
+    if (h) home = h.name;
+  }
+  const q = new URLSearchParams({ jump: 'input', date, slot });
+  if (home) q.set('home', home);
+  window.open(location.pathname + '?' + q.toString(), '_blank');
+}
+
+// 起動時のURLパラメータ処理（別タブジャンプの受け側）。ジャンプした場合 true を返す
+async function _handleJumpParams() {
+  const p = new URLSearchParams(location.search);
+  const jump = p.get('jump');
+  if (!jump) return false;
+  history.replaceState(null, '', location.pathname); // リロード時の再ジャンプを防止
+  const date = p.get('date') || '';
+  const name = p.get('name') || '';
+  const slot = p.get('slot') || '';
+  const home = p.get('home') || '';
+  try {
+    if (jump === 'view' && date) {
+      showViewer();
+      await _viewerJumpToDate(date, name || undefined);
+      return true;
+    }
+    if (jump === 'input' && date) {
+      showScreen('main');
+      if (home) {
+        const sel = document.getElementById('input-home');
+        if (sel) sel.value = home;
+        selectHome(home);
+      }
+      document.getElementById('input-date').value = date;
+      if (slot && state.timeSlot !== slot) selectTimeSlot(slot);
+      showToast(`${home ? home + '・' : ''}${date}（${slot}）の入力を開始してください`, 'info');
+      return true;
+    }
+  } catch (e) { console.warn('ジャンプ処理エラー:', e); }
+  return false;
+}
+
+// サマリーのセルクリック: 記録あり→別タブで確認 / 記録なし→別タブで新規入力
 function _viewerCellClick(el) {
   const { d, s, n, has } = el.dataset;
-  if (has === '1') _viewerJumpToDate(d, n);
-  else _viewerNewEntry(d, s, n);
+  if (has === '1') _openViewTab(d, n);
+  else _openInputTab(d, s, n);
 }
 
 // 指定日の日報一覧（リスト表示）へジャンプ。highlightName指定時はその利用者のカードへスクロール
@@ -3560,27 +3715,6 @@ async function _viewerJumpToDate(date, highlightName) {
   }
 }
 
-// サマリーの「記録なし」セルから新規入力画面へ（住居・報告日・時間帯をプリセット）
-function _viewerNewEntry(date, slot, residentName) {
-  if (!confirm(`${residentName}さんの ${date}（${slot}）の記録を新規入力しますか？\n入力画面に移動します。`)) return;
-  // 住居の特定: 閲覧画面の住居フィルタ → なければ設定から利用者の所属住居を検索
-  let home = document.getElementById('viewer-home')?.value || '';
-  if (!home) {
-    const { homes } = getSettings();
-    const h = (homes || []).find(hh => (hh.residents || []).some(r => (r.name || r) === residentName));
-    if (h) home = h.name;
-  }
-  showScreen('main');
-  if (home) {
-    const sel = document.getElementById('input-home');
-    if (sel) sel.value = home;
-    selectHome(home);
-  }
-  document.getElementById('input-date').value = date;
-  if (state.timeSlot !== slot) selectTimeSlot(slot);
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  showToast(`${home ? home + '・' : ''}${date}（${slot}）の入力を開始してください`, 'info');
-}
 
 function renderSummaryGrid(rows, container) {
   const from = document.getElementById('viewer-from').value;
@@ -3651,7 +3785,7 @@ function renderSummaryGrid(rows, container) {
     const num = dt.getDate();
     const wkend = dt.getDay() === 0 || dt.getDay() === 6;
     return `<th style="min-width:28px;text-align:center;padding:3px 2px;font-size:11px;background:#f5f5f5;font-weight:600;cursor:pointer;text-decoration:underline;${wkend?'color:#c62828':''}"
-      title="クリックで${num}日の日報一覧を表示" onclick="_viewerJumpToDate('${d}')">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
+      title="クリックで${num}日の日報一覧を別タブで表示" onclick="_openViewTab('${d}')">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
   }).join('');
 
   // テーブル本体

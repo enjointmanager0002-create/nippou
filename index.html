@@ -888,6 +888,10 @@
       <svg width="24" height="24" viewBox="0 0 24 24" fill="white"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
     </button>
     <span style="font-size:18px;font-weight:700;color:white">設定</span>
+    <div style="margin-left:auto;display:flex;gap:6px">
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
+    </div>
   </div>
   <div class="settings-content">
 
@@ -1024,6 +1028,9 @@
     <div class="app-header-title">閲覧・編集</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('main')">← 戻る</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </div>
   <div class="app-content">
@@ -1069,6 +1076,9 @@
     <div class="app-header-title">利用状況レポート</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </div>
   <div class="app-content">
@@ -1111,6 +1121,9 @@
     <div class="app-header-title">食材費・日用品費計算</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </div>
   <div class="app-content">
@@ -1203,6 +1216,9 @@
     <div class="app-header-title">人員実績表</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </div>
   <div style="padding:12px">
@@ -1248,6 +1264,9 @@
     <div class="app-header-title">請求書・社労士管理</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
   </div>
   <div style="padding:0">
@@ -3336,7 +3355,6 @@ const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名'
 const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
 let _viewerRows = [];
 let _dupCheckCache = null; // { rows, expiresAt } — submit画面での重複確認用キャッシュ
-let _viewMode = 'list';   // 'list' | 'summary'
 
 // Excelがシリアル数値で返した日付を YYYY-MM-DD 文字列に変換
 // ==============================
@@ -3503,7 +3521,6 @@ function showViewer() {
   document.getElementById('viewer-to').value = today.toISOString().slice(0, 10);
   document.getElementById('viewer-results').innerHTML = '';
   document.getElementById('btn-print').style.display = 'none';
-  _viewMode = 'list';
   showScreen('viewer');
 }
 
@@ -3574,29 +3591,19 @@ async function readExcelAllRows() {
 function renderViewerResults(rows, container) {
   container.innerHTML = '';
 
-  // ビュー切り替えボタン
-  const toggleWrap = document.createElement('div');
-  toggleWrap.style.cssText = 'display:flex;gap:8px;margin-bottom:14px';
-  toggleWrap.innerHTML = `
-    <button id="btn-view-list" onclick="switchViewMode('list')"
-      style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;border:2px solid var(--primary);
-             background:${_viewMode==='list'?'var(--primary)':'#fff'};color:${_viewMode==='list'?'#fff':'var(--primary)'}">
-      一覧
-    </button>
-    <button id="btn-view-summary" onclick="switchViewMode('summary')"
-      style="flex:1;padding:10px;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;border:2px solid var(--primary);
-             background:${_viewMode==='summary'?'var(--primary)':'#fff'};color:${_viewMode==='summary'?'#fff':'var(--primary)'}">
-      サマリー
-    </button>
-  `;
-  container.appendChild(toggleWrap);
+  // サマリー（常時表示）
+  renderSummaryGrid(rows, container);
 
-  if (_viewMode === 'summary') {
-    renderSummaryGrid(rows, container);
-    return;
-  }
+  // 選択日の記録一覧エリア（サマリーの日付・◯✕クリックで内容が入る）
+  const recWrap = document.createElement('div');
+  recWrap.id = 'viewer-day-records';
+  recWrap.style.cssText = 'margin-top:16px';
+  recWrap.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:12px;background:#f8f9fa;border-radius:8px;text-align:center">サマリーの日付や◯✕をクリックすると、その日の日報記録がここに表示されます</div>';
+  container.appendChild(recWrap);
+}
 
-  // --- 一覧モード（古い順） ---
+// 記録カードの一覧を container に描画（古い順・日付見出し付き）
+function _renderRecordList(rows, container) {
   const slotOrder = { '早朝': 0, '日中': 1, '夜間': 2 };
   const groups = new Map();
   for (const row of rows) {
@@ -3630,10 +3637,33 @@ function renderViewerResults(rows, container) {
   }
 }
 
-function switchViewMode(mode) {
-  _viewMode = mode;
-  const container = document.getElementById('viewer-results');
-  renderViewerResults(_printRows, container);
+// サマリーの下に指定日の記録一覧を表示。highlightName指定時はその利用者へスクロール
+function _renderDayRecords(date, highlightName) {
+  const wrap = document.getElementById('viewer-day-records');
+  if (!wrap) return;
+  const dayRows = _printRows.filter(r => _toDateStr(r.values[VH['報告日']]) === date);
+  wrap.innerHTML = '';
+  if (!dayRows.length) {
+    wrap.innerHTML = `<div style="font-size:13px;color:var(--text-muted);padding:12px;background:#fff5f5;border-radius:8px;text-align:center">${escHtml(formatDateJP(date))} の記録はありません</div>`;
+    wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+  _renderRecordList(dayRows, wrap);
+  // スクロールとハイライト
+  if (highlightName) {
+    const cards = wrap.querySelectorAll('.record-resident-card');
+    for (const c of cards) {
+      const nm = c.querySelector('div[style*="font-weight:700"]');
+      if (nm && nm.textContent.trim() === highlightName) {
+        c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        c.style.outline = '3px solid var(--primary)';
+        c.style.borderRadius = '8px';
+        setTimeout(() => { c.style.outline = ''; }, 3000);
+        return;
+      }
+    }
+  }
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ---- 別タブで開く（URLパラメータでジャンプ先を指定） ----
@@ -3688,10 +3718,10 @@ async function _handleJumpParams() {
   return false;
 }
 
-// サマリーのセルクリック: 記録あり→別タブで確認 / 記録なし→別タブで新規入力
+// サマリーのセルクリック: 記録あり→サマリー下にその日の記録を表示 / 記録なし→別タブで新規入力
 function _viewerCellClick(el) {
   const { d, s, n, has } = el.dataset;
-  if (has === '1') _openViewTab(d, n);
+  if (has === '1') _renderDayRecords(d, n);
   else _openInputTab(d, s, n);
 }
 
@@ -3699,20 +3729,8 @@ function _viewerCellClick(el) {
 async function _viewerJumpToDate(date, highlightName) {
   document.getElementById('viewer-from').value = date;
   document.getElementById('viewer-to').value   = date;
-  _viewMode = 'list';
   await searchRecords();
-  if (!highlightName) return;
-  const cards = document.querySelectorAll('#viewer-results .record-resident-card');
-  for (const c of cards) {
-    const nm = c.querySelector('div[style*="font-weight:700"]');
-    if (nm && nm.textContent.trim() === highlightName) {
-      c.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      c.style.outline = '3px solid var(--primary)';
-      c.style.borderRadius = '8px';
-      setTimeout(() => { c.style.outline = ''; }, 3000);
-      break;
-    }
-  }
+  _renderDayRecords(date, highlightName);
 }
 
 
@@ -3785,7 +3803,7 @@ function renderSummaryGrid(rows, container) {
     const num = dt.getDate();
     const wkend = dt.getDay() === 0 || dt.getDay() === 6;
     return `<th style="min-width:28px;text-align:center;padding:3px 2px;font-size:11px;background:#f5f5f5;font-weight:600;cursor:pointer;text-decoration:underline;${wkend?'color:#c62828':''}"
-      title="クリックで${num}日の日報一覧を別タブで表示" onclick="_openViewTab('${d}')">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
+      title="クリックで${num}日の記録をサマリーの下に表示" onclick="_renderDayRecords('${d}')">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
   }).join('');
 
   // テーブル本体
@@ -3847,7 +3865,7 @@ function renderSummaryGrid(rows, container) {
     <span><b style="color:#1565c0;font-size:15px">◯</b> 記録完全（利用の有無・食事記録あり）</span>
     <span><b style="color:#c62828">✕</b> 記録なし または 記録不十分</span>
     <span><b style="color:#c62828">✕</b><span style="background:#fce4ec;padding:1px 4px;border-radius:3px;margin-left:2px;font-size:11px">ピンク</span> 記録が重複（要削除）</span>
-    <span style="color:var(--primary)">◯✕をクリック → 記録の確認／新規入力へ。日付をクリック → その日の一覧へ</span>
+    <span style="color:var(--primary)">◯✕をクリック → その日の記録をサマリーの下に表示（記録なしは別タブで新規入力）。日付クリック → その日の記録を下に表示</span>
   `;
   container.appendChild(legend);
 

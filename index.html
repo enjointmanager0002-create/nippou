@@ -752,7 +752,7 @@
 <!-- MAIN SCREEN -->
 <div id="screen-main" class="hidden">
   <div class="app-header">
-    <div class="app-header-title">電子日報</div>
+    <div class="app-header-title">電子日報 <span id="app-version" style="font-size:10px;font-weight:400;opacity:.65"></span></div>
     <div class="app-header-user">
       <span id="user-name">...</span>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
@@ -1390,6 +1390,9 @@
 // ==============================
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
+// アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
+const APP_VERSION = 'v2026.07.04-1';
+
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
   // 設定方法は同梱の README.md を参照
@@ -2352,10 +2355,11 @@ async function _renderInputSummary() {
     const SLOTS = ['早朝', '日中', '夜間'];
     const SHORT = { '早朝': '朝', '日中': '日', '夜間': '夜' };
     const TH = 'padding:2px 3px;font-size:10px;background:#f5f5f5;text-align:center;border:1px solid #eee';
+    const scrollModeHead = localStorage.getItem('nippou_summary_scroll') === '1';
     const days = [];
     for (let d = 1; d <= lastDay; d++) days.push(`${ym}-${String(d).padStart(2, '0')}`);
 
-    const dayHead = days.map(d => `<th style="${TH}">${parseInt(d.slice(8))}</th>`).join('');
+    const dayHead = days.map(d => `<th style="${TH};${scrollModeHead ? 'min-width:20px' : ''}">${parseInt(d.slice(8))}</th>`).join('');
     let tbody = '';
     for (const nm of residents) {
       for (let si = 0; si < SLOTS.length; si++) {
@@ -2375,14 +2379,22 @@ async function _renderInputSummary() {
         tbody += `<tr>${nameCell}<td style="font-size:10px;padding:2px 3px;border:1px solid #eee;color:#888">${SHORT[slot]}</td>${cells}</tr>`;
       }
     }
+    const scrollMode = localStorage.getItem('nippou_summary_scroll') === '1';
+    const tblStyle = scrollMode
+      ? 'border-collapse:collapse;white-space:nowrap'
+      : 'border-collapse:collapse;width:100%;table-layout:fixed';
     body.innerHTML = `
       <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #eee;border-radius:6px">
-        <table style="border-collapse:collapse;white-space:nowrap">
-          <thead><tr><th style="${TH};position:sticky;left:0;z-index:1">利用者</th><th style="${TH}">帯</th>${dayHead}</tr></thead>
+        <table style="${tblStyle}">
+          <thead><tr><th style="${TH};${scrollMode ? '' : 'width:56px'}">利用者</th><th style="${TH};${scrollMode ? '' : 'width:18px'}">帯</th>${dayHead}</tr></thead>
           <tbody>${tbody}</tbody>
         </table>
       </div>
-      <div style="font-size:10px;color:var(--text-muted);margin-top:4px">◯=記録あり ✕=未入力（クリックで報告日・時間帯をセット） ピンク=重複</div>`;
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+        <span style="font-size:10px;color:var(--text-muted)">◯=記録あり ✕=未入力（クリックで報告日・時間帯をセット） ピンク=重複</span>
+        <button class="btn btn-secondary" style="width:auto;padding:3px 12px;font-size:11px"
+                onclick="_toggleSummaryScroll()">${scrollMode ? '全体表示に切替' : 'スクロール表示に切替'}</button>
+      </div>`;
   } catch (e) {
     if (seq === _inputSummarySeq) body.innerHTML = `<div style="font-size:12px;color:#c62828;padding:6px">読み込みエラー: ${escHtml(e.message)}</div>`;
   }
@@ -3326,6 +3338,9 @@ function escHtml(str) {
 // INITIALIZATION
 // ==============================
 document.addEventListener('DOMContentLoaded', () => {
+  const verEl = document.getElementById('app-version');
+  if (verEl) verEl.textContent = APP_VERSION;
+  console.log('電子日報 ' + APP_VERSION);
   showScreen('loading');
 
   // 10秒でタイムアウトしてログイン画面を表示
@@ -3602,7 +3617,22 @@ async function readExcelAllRows() {
   return rows;
 }
 
+// サマリーの表示モード切替（全体表示 ⇄ スクロール表示）。両画面共通・端末ごとに記憶
+let _lastViewerRender = null;
+function _toggleSummaryScroll() {
+  const cur = localStorage.getItem('nippou_summary_scroll') === '1';
+  localStorage.setItem('nippou_summary_scroll', cur ? '0' : '1');
+  // 閲覧・編集画面のサマリーを再描画
+  if (_lastViewerRender) {
+    const c = document.getElementById('viewer-results');
+    if (c) renderViewerResults(_lastViewerRender.rows, c, _lastViewerRender.opts);
+  }
+  // 記入画面のミニサマリーも再描画
+  _renderInputSummary();
+}
+
 function renderViewerResults(rows, container, opts = {}) {
+  _lastViewerRender = { rows, opts };
   container.innerHTML = '';
 
   // サマリー（常時表示・1か月分）
@@ -3854,14 +3884,17 @@ function renderSummaryGrid(rows, container, range) {
   const SLOT_COLOR = { '早朝': '#e65100', '日中': '#2e7d32', '夜間': '#283593' };
   const DOW        = ['日','月','火','水','木','金','土'];
 
+  // 表示モード: 全体表示（幅100%に全日を収める） / スクロール表示（列幅固定で横スクロール）
+  const scrollMode = localStorage.getItem('nippou_summary_scroll') === '1';
+
   // ヘッダー行（日付）: クリックでその日の日報一覧へ
   const dayHeaders = days.map(d => {
     const dt  = new Date(d + 'T00:00:00');
     const dow = DOW[dt.getDay()];
     const num = dt.getDate();
     const wkend = dt.getDay() === 0 || dt.getDay() === 6;
-    return `<th style="min-width:28px;text-align:center;padding:3px 2px;font-size:11px;background:#f5f5f5;font-weight:600;cursor:pointer;text-decoration:underline;${wkend?'color:#c62828':''}"
-      title="クリックで${num}日の記録をサマリーの下に表示" onclick="_renderDayRecords('${d}')">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
+    return `<th style="${scrollMode ? 'min-width:26px;' : ''}text-align:center;padding:2px 0;font-size:10px;line-height:1.2;background:#f5f5f5;font-weight:600;cursor:pointer;text-decoration:underline;${wkend?'color:#c62828':''}"
+      title="クリックで${num}日の記録をサマリーの下に表示" onclick="_renderDayRecords('${d}')">${num}<br><span style="font-size:8px;font-weight:400">${dow}</span></th>`;
   }).join('');
 
   // テーブル本体
@@ -3879,18 +3912,18 @@ function renderSummaryGrid(rows, container, range) {
 
         // 重複あり → ×（重複エラー）
         if (dupSet.has(key)) {
-          return `<td ${cellAttr(1)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fce4ec;cursor:pointer" title="記録が重複しています（2件以上）。クリックで確認">✕</td>`;
+          return `<td ${cellAttr(1)} style="text-align:center;font-size:11px;color:#c62828;font-weight:700;padding:1px 0;border-right:1px solid #eee;background:#fce4ec;cursor:pointer" title="記録が重複しています（2件以上）。クリックで確認">✕</td>`;
         }
 
         const row = lookup[key];
 
         // 未来の日付で記録なし → 空欄（まだ未入力ではない）
         if (!row && date > _todayStr) {
-          return `<td style="padding:3px 2px;border-right:1px solid #eee;background:#fafafa"></td>`;
+          return `<td style="padding:1px 0;border-right:1px solid #eee;background:#fafafa"></td>`;
         }
 
         // 記録なし → ×（クリックで新規入力へ）
-        if (!row) return `<td ${cellAttr(0)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="記録なし。クリックで新規入力">✕</td>`;
+        if (!row) return `<td ${cellAttr(0)} style="text-align:center;font-size:11px;color:#c62828;font-weight:700;padding:1px 0;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="記録なし。クリックで新規入力">✕</td>`;
 
         const riyou   = String(row.values[VH['利用の有無']] || '');
         const shokuji = String(row.values[VH['食事内容']]   || '');
@@ -3905,17 +3938,17 @@ function renderSummaryGrid(rows, container, range) {
         const complete  = riyouOk && shokujiOk;
 
         if (complete) {
-          return `<td ${cellAttr(1)} style="text-align:center;font-size:15px;color:#1565c0;font-weight:700;padding:3px 2px;border-right:1px solid #eee;cursor:pointer" title="${escHtml(staff)}が入力。クリックで確認">◯</td>`;
+          return `<td ${cellAttr(1)} style="text-align:center;font-size:12px;color:#1565c0;font-weight:700;padding:1px 0;border-right:1px solid #eee;cursor:pointer" title="${escHtml(staff)}が入力。クリックで確認">◯</td>`;
         } else {
-          return `<td ${cellAttr(1)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="${escHtml(staff)}が入力（記録不十分）。クリックで確認">✕</td>`;
+          return `<td ${cellAttr(1)} style="text-align:center;font-size:11px;color:#c62828;font-weight:700;padding:1px 0;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="${escHtml(staff)}が入力（記録不十分）。クリックで確認">✕</td>`;
         }
       }).join('');
 
       // 利用者名セル（3行分をrowspanで結合）
       const nameCell = si === 0
-        ? `<td rowspan="3" style="position:sticky;left:0;z-index:1;background:#fff;font-size:12px;font-weight:700;padding:4px 6px;border-right:2px solid #ddd;min-width:68px;max-width:80px;word-break:break-all;vertical-align:middle;border-bottom:2px solid #ccc">${escHtml(residentName)}</td>`
+        ? `<td rowspan="3" style="background:#fff;font-size:11px;font-weight:700;padding:2px 3px;border-right:2px solid #ddd;word-break:break-all;vertical-align:middle;border-bottom:2px solid #ccc">${escHtml(residentName)}</td>`
         : '';
-      const slotCell = `<td style="font-size:11px;font-weight:700;color:${sc};padding:3px 4px;border-right:1px solid #ddd;white-space:nowrap">${SLOT_SHORT[slot]}</td>`;
+      const slotCell = `<td style="font-size:10px;font-weight:700;color:${sc};padding:1px 2px;border-right:1px solid #ddd;white-space:nowrap;text-align:center">${SLOT_SHORT[slot]}</td>`;
       const rowBorder = isLast ? 'border-bottom:2px solid #ccc;' : '';
       tbody += `<tr style="${rowBorder}">${nameCell}${slotCell}${cells}</tr>`;
     }
@@ -3934,18 +3967,23 @@ function renderSummaryGrid(rows, container, range) {
              onchange="localStorage.setItem('nippou_summary_newtab', this.checked ? '1' : '0')">
       ◯✕を別タブで開く
     </label>
+    <button class="btn btn-secondary" style="width:auto;padding:3px 12px;font-size:11px"
+            onclick="_toggleSummaryScroll()">${scrollMode ? '全体表示に切替' : 'スクロール表示に切替'}</button>
   `;
   container.appendChild(legend);
 
   // テーブル本体
   const wrap = document.createElement('div');
   wrap.style.cssText = 'overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid #ddd;border-radius:8px';
+  const tableStyle = scrollMode
+    ? 'border-collapse:collapse;font-family:inherit;white-space:nowrap'
+    : 'border-collapse:collapse;font-family:inherit;width:100%;table-layout:fixed';
   wrap.innerHTML = `
-    <table style="border-collapse:collapse;white-space:nowrap;font-family:inherit">
+    <table style="${tableStyle}">
       <thead>
         <tr>
-          <th style="position:sticky;left:0;z-index:2;background:#f5f5f5;min-width:68px;padding:5px 6px;font-size:12px;border-right:2px solid #ddd;border-bottom:2px solid #bbb">利用者</th>
-          <th style="min-width:18px;background:#f5f5f5;font-size:10px;padding:3px 4px;border-right:1px solid #ddd;border-bottom:2px solid #bbb">帯</th>
+          <th style="width:62px;background:#f5f5f5;padding:3px 3px;font-size:11px;border-right:2px solid #ddd;border-bottom:2px solid #bbb">利用者</th>
+          <th style="width:20px;background:#f5f5f5;font-size:10px;padding:2px 1px;border-right:1px solid #ddd;border-bottom:2px solid #bbb">帯</th>
           ${dayHeaders}
         </tr>
       </thead>

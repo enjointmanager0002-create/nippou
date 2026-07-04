@@ -1047,7 +1047,7 @@
         </div>
         <div class="form-group" style="margin:0">
           <label class="form-label">住居<span class="required">*</span></label>
-          <select id="viewer-home" class="form-select" style="margin:0" onchange="updateViewerResidentFilter()">
+          <select id="viewer-home" class="form-select" style="margin:0" onchange="updateViewerResidentFilter(); searchRecords()">
           </select>
         </div>
         <div class="form-group" style="margin:0">
@@ -2350,7 +2350,7 @@ async function _renderInputSummary() {
     }
 
     const SLOTS = ['早朝', '日中', '夜間'];
-    const SHORT = { '早朝': '早', '日中': '日', '夜間': '夜' };
+    const SHORT = { '早朝': '朝', '日中': '日', '夜間': '夜' };
     const TH = 'padding:2px 3px;font-size:10px;background:#f5f5f5;text-align:center;border:1px solid #eee';
     const days = [];
     for (let d = 1; d <= lastDay; d++) days.push(`${ym}-${String(d).padStart(2, '0')}`);
@@ -3504,7 +3504,7 @@ function _toTimeStr(v) {
   return String(v || '');
 }
 
-function showViewer() {
+function showViewer(skipAutoSearch) {
   const { homes } = getSettings();
   const validHomes = homes.filter(h => h.name);
   const sel = document.getElementById('viewer-home');
@@ -3514,14 +3514,18 @@ function showViewer() {
     sel.value = state.selectedHome;
   }
   updateViewerResidentFilter();
+  // デフォルト期間は直近1週間（サマリーは検索期間に関わらず1か月分を表示）
   const today = new Date();
   const week = new Date(today);
   week.setDate(today.getDate() - 6);
-  document.getElementById('viewer-from').value = week.toISOString().slice(0, 10);
-  document.getElementById('viewer-to').value = today.toISOString().slice(0, 10);
+  const fmtD = dt => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  document.getElementById('viewer-from').value = fmtD(week);
+  document.getElementById('viewer-to').value = fmtD(today);
   document.getElementById('viewer-results').innerHTML = '';
   document.getElementById('btn-print').style.display = 'none';
   showScreen('viewer');
+  // 画面を開いた時点で直近1週間を自動検索し、サマリー＋記録一覧を常時表示
+  if (!skipAutoSearch) searchRecords();
 }
 
 function updateViewerResidentFilter() {
@@ -3537,6 +3541,7 @@ function updateViewerResidentFilter() {
 }
 
 let _printRows = [];
+let _summaryRows = []; // サマリー表示用（終了日の属する月の1か月分）
 
 async function searchRecords() {
   const from           = document.getElementById('viewer-from').value;
@@ -3552,20 +3557,29 @@ async function searchRecords() {
 
   try {
     _viewerRows = await readExcelAllRows();
-    const filtered = _viewerRows.filter(r => {
-      const d = _toDateStr(r.values[VH['報告日']]);
-      if (!d || d < from || d > to) return false;
+    const matchHR = r => {
       if (homeFilter     && r.values[VH['ホーム名']]  !== homeFilter)     return false;
       if (residentFilter && r.values[VH['利用者名']]  !== residentFilter) return false;
       return true;
+    };
+    // 記録一覧: 検索期間で絞り込み
+    const filtered = _viewerRows.filter(r => {
+      const d = _toDateStr(r.values[VH['報告日']]);
+      return d && d >= from && d <= to && matchHR(r);
     });
-    if (!filtered.length) {
-      container.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">該当するデータがありません</div>';
-      return;
-    }
+    // サマリー: 終了日の属する月の1か月分
+    const ym = to.slice(0, 7);
+    const [sy, sm] = ym.split('-').map(Number);
+    const summaryFrom = `${ym}-01`;
+    const summaryTo   = `${ym}-${String(new Date(sy, sm, 0).getDate()).padStart(2, '0')}`;
+    _summaryRows = _viewerRows.filter(r => {
+      const d = _toDateStr(r.values[VH['報告日']]);
+      return d && d >= summaryFrom && d <= summaryTo && matchHR(r);
+    });
+
     _printRows = filtered;
-    document.getElementById('btn-print').style.display = 'block';
-    renderViewerResults(filtered, container);
+    document.getElementById('btn-print').style.display = filtered.length ? 'block' : 'none';
+    renderViewerResults(filtered, container, { summaryRows: _summaryRows, summaryFrom, summaryTo });
   } catch (e) {
     container.innerHTML = `<div style="text-align:center;padding:32px;color:#c62828">読み込みエラー: ${escHtml(e.message)}</div>`;
   }
@@ -3588,18 +3602,33 @@ async function readExcelAllRows() {
   return rows;
 }
 
-function renderViewerResults(rows, container) {
+function renderViewerResults(rows, container, opts = {}) {
   container.innerHTML = '';
 
-  // サマリー（常時表示）
-  renderSummaryGrid(rows, container);
+  // サマリー（常時表示・1か月分）
+  const sumRows  = opts.summaryRows || rows;
+  const sumRange = opts.summaryFrom ? { from: opts.summaryFrom, to: opts.summaryTo } : null;
+  renderSummaryGrid(sumRows, container, sumRange);
 
-  // 選択日の記録一覧エリア（サマリーの日付・◯✕クリックで内容が入る）
+  // 記録一覧エリア（既定は検索期間全体。サマリーの日付・◯✕クリックでその日だけに絞り込み）
   const recWrap = document.createElement('div');
   recWrap.id = 'viewer-day-records';
   recWrap.style.cssText = 'margin-top:16px';
-  recWrap.innerHTML = '<div style="font-size:13px;color:var(--text-muted);padding:12px;background:#f8f9fa;border-radius:8px;text-align:center">サマリーの日付や◯✕をクリックすると、その日の日報記録がここに表示されます</div>';
   container.appendChild(recWrap);
+  if (!rows.length) {
+    recWrap.innerHTML = '<div style="text-align:center;padding:24px;color:var(--text-muted);background:#f8f9fa;border-radius:8px">検索期間に該当する記録がありません（サマリーの日付クリックで他の日も確認できます）</div>';
+  } else {
+    _renderRecordList(rows, recWrap);
+  }
+}
+
+// 絞り込みを解除して期間全体の記録一覧に戻す
+function _renderAllRecords() {
+  const wrap = document.getElementById('viewer-day-records');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  _renderRecordList(_printRows, wrap);
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // 記録カードの一覧を container に描画（古い順・日付見出し付き）
@@ -3637,14 +3666,28 @@ function _renderRecordList(rows, container) {
   }
 }
 
-// サマリーの下に指定日の記録一覧を表示。highlightName指定時はその利用者へスクロール
+// サマリーの下の一覧を指定日だけに絞り込み表示。highlightName指定時はその利用者へスクロール
 function _renderDayRecords(date, highlightName) {
   const wrap = document.getElementById('viewer-day-records');
   if (!wrap) return;
-  const dayRows = _printRows.filter(r => _toDateStr(r.values[VH['報告日']]) === date);
+  // サマリー（1か月分）のデータから該当日を抽出（検索期間外の日付クリックにも対応）
+  const src = _summaryRows.length ? _summaryRows : _printRows;
+  const dayRows = src.filter(r => _toDateStr(r.values[VH['報告日']]) === date);
   wrap.innerHTML = '';
+
+  // 絞り込み中の表示と「期間全体に戻す」ボタン
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;background:#e8f0fe;border-radius:8px;padding:8px 12px;margin-bottom:4px';
+  bar.innerHTML = `
+    <span style="font-size:13px;font-weight:700;color:var(--primary)">${escHtml(formatDateJP(date))} の記録に絞り込み中</span>
+    <button class="btn btn-secondary" style="width:auto;padding:5px 12px;font-size:12px" onclick="_renderAllRecords()">期間全体を表示</button>`;
+  wrap.appendChild(bar);
+
   if (!dayRows.length) {
-    wrap.innerHTML = `<div style="font-size:13px;color:var(--text-muted);padding:12px;background:#fff5f5;border-radius:8px;text-align:center">${escHtml(formatDateJP(date))} の記録はありません</div>`;
+    const empty = document.createElement('div');
+    empty.style.cssText = 'font-size:13px;color:var(--text-muted);padding:12px;background:#fff5f5;border-radius:8px;text-align:center;margin-top:8px';
+    empty.textContent = `${formatDateJP(date)} の記録はありません`;
+    wrap.appendChild(empty);
     wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
@@ -3734,10 +3777,20 @@ async function _viewerJumpToDate(date, highlightName) {
 }
 
 
-function renderSummaryGrid(rows, container) {
-  const from = document.getElementById('viewer-from').value;
-  const to   = document.getElementById('viewer-to').value;
+function renderSummaryGrid(rows, container, range) {
+  const from = range?.from || document.getElementById('viewer-from').value;
+  const to   = range?.to   || document.getElementById('viewer-to').value;
   const myName = state.account?.name || state.account?.username || '';
+  const _now = new Date();
+  const _todayStr = `${_now.getFullYear()}-${String(_now.getMonth() + 1).padStart(2, '0')}-${String(_now.getDate()).padStart(2, '0')}`;
+
+  // 月タイトル（1か月分サマリーの場合）
+  if (range) {
+    const t = document.createElement('div');
+    t.style.cssText = 'font-size:14px;font-weight:700;color:var(--primary);margin-bottom:6px';
+    t.textContent = `${parseInt(from.slice(0,4))}年${parseInt(from.slice(5,7))}月の入力状況`;
+    container.appendChild(t);
+  }
 
   // 表示期間の全日付を生成（toISOString()はUTC変換で日付がズレるためローカル日付で構築）
   const days = [];
@@ -3792,7 +3845,7 @@ function renderSummaryGrid(rows, container) {
   }
 
   const SLOTS      = ['早朝', '日中', '夜間'];
-  const SLOT_SHORT = { '早朝': '早', '日中': '日', '夜間': '夜' };
+  const SLOT_SHORT = { '早朝': '朝', '日中': '日', '夜間': '夜' };
   const SLOT_COLOR = { '早朝': '#e65100', '日中': '#2e7d32', '夜間': '#283593' };
   const DOW        = ['日','月','火','水','木','金','土'];
 
@@ -3825,6 +3878,11 @@ function renderSummaryGrid(rows, container) {
         }
 
         const row = lookup[key];
+
+        // 未来の日付で記録なし → 空欄（まだ未入力ではない）
+        if (!row && date > _todayStr) {
+          return `<td style="padding:3px 2px;border-right:1px solid #eee;background:#fafafa"></td>`;
+        }
 
         // 記録なし → ×（クリックで新規入力へ）
         if (!row) return `<td ${cellAttr(0)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="記録なし。クリックで新規入力">✕</td>`;

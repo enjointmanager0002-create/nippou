@@ -3761,11 +3761,16 @@ async function _handleJumpParams() {
   return false;
 }
 
-// サマリーのセルクリック: 記録あり→サマリー下にその日の記録を表示 / 記録なし→別タブで新規入力
+// サマリーのセルクリック: 記録あり→サマリー下に表示（設定ONなら別タブ） / 記録なし→別タブで新規入力
 function _viewerCellClick(el) {
   const { d, s, n, has } = el.dataset;
-  if (has === '1') _renderDayRecords(d, n);
-  else _openInputTab(d, s, n);
+  const newTab = localStorage.getItem('nippou_summary_newtab') === '1';
+  if (has === '1') {
+    if (newTab) _openViewTab(d, n);
+    else _renderDayRecords(d, n);
+  } else {
+    _openInputTab(d, s, n);
+  }
 }
 
 // 指定日の日報一覧（リスト表示）へジャンプ。highlightName指定時はその利用者のカードへスクロール
@@ -3924,6 +3929,11 @@ function renderSummaryGrid(rows, container, range) {
     <span><b style="color:#c62828">✕</b> 記録なし または 記録不十分</span>
     <span><b style="color:#c62828">✕</b><span style="background:#fce4ec;padding:1px 4px;border-radius:3px;margin-left:2px;font-size:11px">ピンク</span> 記録が重複（要削除）</span>
     <span style="color:var(--primary)">◯✕をクリック → その日の記録をサマリーの下に表示（記録なしは別タブで新規入力）。日付クリック → その日の記録を下に表示</span>
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-weight:700">
+      <input type="checkbox" ${localStorage.getItem('nippou_summary_newtab') === '1' ? 'checked' : ''}
+             onchange="localStorage.setItem('nippou_summary_newtab', this.checked ? '1' : '0')">
+      ◯✕を別タブで開く
+    </label>
   `;
   container.appendChild(legend);
 

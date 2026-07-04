@@ -845,14 +845,14 @@
 
     <!-- Submit buttons -->
     <div class="btn-row" id="submit-area">
-      <button class="btn btn-secondary" onclick="clearForm()">クリア</button>
-      <button class="btn btn-secondary" id="btn-submit" onclick="submitForm()" disabled style="font-size:13px">
+      <button class="btn btn-secondary" onclick="clearForm()" style="flex:0 0 90px">クリア</button>
+      <button class="btn btn-primary" id="btn-submit" onclick="submitForm()" disabled style="font-size:15px;font-weight:700;flex:1">
         未送信をまとめて送信
       </button>
     </div>
 
     <div class="card" style="margin-top:0">
-      <button class="btn btn-primary" style="width:100%;font-size:14px" onclick="showAiSummary(state.selectedHome)">AI要約（直近2週間）</button>
+      <button class="btn btn-secondary" style="width:100%;font-size:12px;color:#888" onclick="showAiSummary(state.selectedHome)">AI要約（直近2週間）</button>
       <p style="font-size:11px;color:#aaa;margin:8px 0 0;text-align:center">※ クリックするたびにAPI費用が発生します。連続クリックにご注意ください。</p>
     </div>
 
@@ -2867,17 +2867,6 @@ async function submitForm() {
         continue;
       }
 
-      // 重複チェック: 同一利用者・同日・同時間帯のデータが既に存在するか確認
-      const dup = existingRows.find(row =>
-        String(row.values[VH['利用者名']]) === name &&
-        _toDateStr(row.values[VH['報告日']]) === date &&
-        String(row.values[VH['時間帯']]) === state.timeSlot
-      );
-      if (dup) {
-        dupSkipped.push(name);
-        continue;
-      }
-
       const row = [
         now,
         date,
@@ -2903,6 +2892,33 @@ async function submitForm() {
         d.taijo || '',
       ];
 
+      // 重複チェック: 同一利用者・同日・同時間帯のデータが既に存在する場合は上書き確認
+      const dup = existingRows.find(er =>
+        String(er.values[VH['利用者名']]) === name &&
+        _toDateStr(er.values[VH['報告日']]) === date &&
+        String(er.values[VH['時間帯']]) === state.timeSlot
+      );
+      if (dup) {
+        const overwrite = confirm(
+          `${name}さんの ${date}（${state.timeSlot}）の記録はすでに存在します。\n\n新しい内容で上書きしますか？\n（キャンセルすると既存の記録をそのまま残します）`
+        );
+        if (!overwrite) {
+          dupSkipped.push(name);
+          continue;
+        }
+        try {
+          await updateExcelRow(dup.excelRow, row);
+          invalidateDupCache();
+          state.submittedResidents.add(batchKey);
+          try { sessionStorage.setItem('nippou_sent', JSON.stringify([...state.submittedResidents])); } catch {}
+          savedCount++;
+        } catch (rowErr) {
+          console.error(`${name} 上書き失敗:`, rowErr);
+          failedResidents.push(name);
+        }
+        continue;
+      }
+
       // ★ 1人ずつ個別に try-catch → 1人失敗しても残りを継続
       try {
         await appendRowToExcel(row);
@@ -2916,9 +2932,9 @@ async function submitForm() {
       }
     }
 
-    // 重複によりスキップした利用者がいれば通知
+    // 上書きしなかった（既存を残した）利用者がいれば通知
     if (dupSkipped.length > 0) {
-      showToast(`${dupSkipped.join('、')}さんはすでに記録が存在するためスキップしました。修正は記録一覧の「編集」からどうぞ。`, 'error');
+      showToast(`${dupSkipped.join('、')}さんは既存の記録をそのまま残しました。修正する場合は閲覧・編集画面からどうぞ。`, 'info');
     }
 
     // 一部送信失敗 → メイン画面に戻り再送信を促す（送信済み分は次回スキップ）
@@ -3517,6 +3533,55 @@ function switchViewMode(mode) {
   renderViewerResults(_printRows, container);
 }
 
+// サマリーのセルクリック: 記録あり→その日の一覧で確認 / 記録なし→新規入力へ
+function _viewerCellClick(el) {
+  const { d, s, n, has } = el.dataset;
+  if (has === '1') _viewerJumpToDate(d, n);
+  else _viewerNewEntry(d, s, n);
+}
+
+// 指定日の日報一覧（リスト表示）へジャンプ。highlightName指定時はその利用者のカードへスクロール
+async function _viewerJumpToDate(date, highlightName) {
+  document.getElementById('viewer-from').value = date;
+  document.getElementById('viewer-to').value   = date;
+  _viewMode = 'list';
+  await searchRecords();
+  if (!highlightName) return;
+  const cards = document.querySelectorAll('#viewer-results .record-resident-card');
+  for (const c of cards) {
+    const nm = c.querySelector('div[style*="font-weight:700"]');
+    if (nm && nm.textContent.trim() === highlightName) {
+      c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      c.style.outline = '3px solid var(--primary)';
+      c.style.borderRadius = '8px';
+      setTimeout(() => { c.style.outline = ''; }, 3000);
+      break;
+    }
+  }
+}
+
+// サマリーの「記録なし」セルから新規入力画面へ（住居・報告日・時間帯をプリセット）
+function _viewerNewEntry(date, slot, residentName) {
+  if (!confirm(`${residentName}さんの ${date}（${slot}）の記録を新規入力しますか？\n入力画面に移動します。`)) return;
+  // 住居の特定: 閲覧画面の住居フィルタ → なければ設定から利用者の所属住居を検索
+  let home = document.getElementById('viewer-home')?.value || '';
+  if (!home) {
+    const { homes } = getSettings();
+    const h = (homes || []).find(hh => (hh.residents || []).some(r => (r.name || r) === residentName));
+    if (h) home = h.name;
+  }
+  showScreen('main');
+  if (home) {
+    const sel = document.getElementById('input-home');
+    if (sel) sel.value = home;
+    selectHome(home);
+  }
+  document.getElementById('input-date').value = date;
+  if (state.timeSlot !== slot) selectTimeSlot(slot);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showToast(`${home ? home + '・' : ''}${date}（${slot}）の入力を開始してください`, 'info');
+}
+
 function renderSummaryGrid(rows, container) {
   const from = document.getElementById('viewer-from').value;
   const to   = document.getElementById('viewer-to').value;
@@ -3579,13 +3644,14 @@ function renderSummaryGrid(rows, container) {
   const SLOT_COLOR = { '早朝': '#e65100', '日中': '#2e7d32', '夜間': '#283593' };
   const DOW        = ['日','月','火','水','木','金','土'];
 
-  // ヘッダー行（日付）
+  // ヘッダー行（日付）: クリックでその日の日報一覧へ
   const dayHeaders = days.map(d => {
     const dt  = new Date(d + 'T00:00:00');
     const dow = DOW[dt.getDay()];
     const num = dt.getDate();
     const wkend = dt.getDay() === 0 || dt.getDay() === 6;
-    return `<th style="min-width:28px;text-align:center;padding:3px 2px;font-size:11px;background:#f5f5f5;font-weight:600;${wkend?'color:#c62828':''}">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
+    return `<th style="min-width:28px;text-align:center;padding:3px 2px;font-size:11px;background:#f5f5f5;font-weight:600;cursor:pointer;text-decoration:underline;${wkend?'color:#c62828':''}"
+      title="クリックで${num}日の日報一覧を表示" onclick="_viewerJumpToDate('${d}')">${num}<br><span style="font-size:9px;font-weight:400">${dow}</span></th>`;
   }).join('');
 
   // テーブル本体
@@ -3598,16 +3664,18 @@ function renderSummaryGrid(rows, container) {
 
       const cells = days.map(date => {
         const key = `${date}_${slot}_${residentName}`;
+        const cellAttr = (has) =>
+          `data-d="${date}" data-s="${escHtml(slot)}" data-n="${escHtml(residentName)}" data-has="${has}" onclick="_viewerCellClick(this)"`;
 
         // 重複あり → ×（重複エラー）
         if (dupSet.has(key)) {
-          return `<td style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fce4ec" title="記録が重複しています（2件以上）">✕</td>`;
+          return `<td ${cellAttr(1)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fce4ec;cursor:pointer" title="記録が重複しています（2件以上）。クリックで確認">✕</td>`;
         }
 
         const row = lookup[key];
 
-        // 記録なし → ×
-        if (!row) return `<td style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5">✕</td>`;
+        // 記録なし → ×（クリックで新規入力へ）
+        if (!row) return `<td ${cellAttr(0)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="記録なし。クリックで新規入力">✕</td>`;
 
         const riyou   = String(row.values[VH['利用の有無']] || '');
         const shokuji = String(row.values[VH['食事内容']]   || '');
@@ -3622,9 +3690,9 @@ function renderSummaryGrid(rows, container) {
         const complete  = riyouOk && shokujiOk;
 
         if (complete) {
-          return `<td style="text-align:center;font-size:15px;color:#1565c0;font-weight:700;padding:3px 2px;border-right:1px solid #eee" title="${escHtml(staff)}が入力">◯</td>`;
+          return `<td ${cellAttr(1)} style="text-align:center;font-size:15px;color:#1565c0;font-weight:700;padding:3px 2px;border-right:1px solid #eee;cursor:pointer" title="${escHtml(staff)}が入力。クリックで確認">◯</td>`;
         } else {
-          return `<td style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5" title="${escHtml(staff)}が入力（記録不十分）">✕</td>`;
+          return `<td ${cellAttr(1)} style="text-align:center;font-size:14px;color:#c62828;font-weight:700;padding:3px 2px;border-right:1px solid #eee;background:#fff5f5;cursor:pointer" title="${escHtml(staff)}が入力（記録不十分）。クリックで確認">✕</td>`;
         }
       }).join('');
 
@@ -3645,6 +3713,7 @@ function renderSummaryGrid(rows, container) {
     <span><b style="color:#1565c0;font-size:15px">◯</b> 記録完全（利用の有無・食事記録あり）</span>
     <span><b style="color:#c62828">✕</b> 記録なし または 記録不十分</span>
     <span><b style="color:#c62828">✕</b><span style="background:#fce4ec;padding:1px 4px;border-radius:3px;margin-left:2px;font-size:11px">ピンク</span> 記録が重複（要削除）</span>
+    <span style="color:var(--primary)">◯✕をクリック → 記録の確認／新規入力へ。日付をクリック → その日の一覧へ</span>
   `;
   container.appendChild(legend);
 
@@ -4109,14 +4178,18 @@ async function updateExcelRow(excelRowNum, rowData) {
 }
 
 async function deleteExcelRow(excelRowNum) {
-  // テーブルAPIではなくrange deleteを使用（絶対行番号を直接指定でき、オフセット計算不要）
-  const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
-  const sheetId = wsInfo.value[0].id;
-  const colEnd = String.fromCharCode(64 + VIEWER_HEADERS.length);
+  // データはテーブルとして保存されているため、range delete（shift up）は
+  // insertDeleteConflict で拒否される。テーブル行APIで削除する。
+  // テーブルの開始行を取得して、絶対行番号→テーブル内インデックス（0始まり）に変換
+  const rangeInfo = await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/range?$select=address`);
+  const m = String(rangeInfo.address || '').match(/![A-Z]+(\d+):/);
+  const headerRow = m ? parseInt(m[1]) : 1;
+  const idx = excelRowNum - headerRow - 1;
+  if (idx < 0) throw new Error(`削除対象の行番号が不正です（行${excelRowNum}）`);
   await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${excelRowNum}:${colEnd}${excelRowNum}')/delete`,
-    'POST',
-    { shift: 'Up' }
+    `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/itemAt(index=${idx})`,
+    'DELETE'
   );
 }
 

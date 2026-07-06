@@ -917,13 +917,15 @@
       </div>
 
       <div class="card">
-        <div class="card-title">職員名登録</div>
-        <p style="font-size:12px;color:#888;margin:0 0 8px">担当住居にチェックを入れてください</p>
-        <div id="staff-name-list"></div>
-        <button class="btn-add-resident" id="btn-add-staff" onclick="addStaffNameField()" style="margin-top:8px">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-          <span class="staff-count-label">職員を追加（0/11）</span>
-        </button>
+        <details>
+          <summary style="cursor:pointer;font-size:15px;font-weight:700;color:var(--primary);padding:4px 0;user-select:none">職員名登録（タップで開閉）</summary>
+          <p style="font-size:12px;color:#888;margin:8px 0 8px">担当住居にチェックを入れてください</p>
+          <div id="staff-name-list"></div>
+          <button class="btn-add-resident" id="btn-add-staff" onclick="addStaffNameField()" style="margin-top:8px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            <span class="staff-count-label">職員を追加（0/11）</span>
+          </button>
+        </details>
       </div>
 
       <div class="card">
@@ -1520,7 +1522,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.04-7';
+const APP_VERSION = 'v2026.07.04-9';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1762,10 +1764,14 @@ async function afterLogin() {
     document.getElementById('user-name').textContent = state.account.name || state.account.username;
     await initExcelFile();
     loadSettings();
+    // 再読み込み前に開いていた画面を退避（この後のshowScreen('main')で上書きされるため）
+    const lastScreen = sessionStorage.getItem('nippou_last_screen');
     initForm();
     showScreen('main');
     // 別タブジャンプ（?jump=view/input）の処理。ジャンプした場合は後続のフォーム初期化をスキップ
     const jumped = await _handleJumpParams();
+    // 再読み込み前に開いていた画面へ復元（ジャンプ時はそちらを優先）
+    if (!jumped) _restoreLastScreen(lastScreen);
     // 設定のクラウド同期はバックグラウンドで実行（タイムアウトしてもUI表示を妨げない）
     loadSettingsFromCloud().then(() => {
       loadSettings();
@@ -1925,7 +1931,19 @@ async function createExcelDatabase() {
   }
 }
 
+// 危険な操作の前にセキュリティパスワードを要求する
+function _requireSecurityPass(action) {
+  const p = prompt(`「${action}」の実行にはセキュリティパスワードが必要です。\nパスワードを入力してください：`);
+  if (p === null) return false; // キャンセル
+  if (p !== '3553') {
+    showToast('パスワードが違います', 'error');
+    return false;
+  }
+  return true;
+}
+
 async function resetExcelFile() {
+  if (!_requireSecurityPass('データファイルの再作成')) return;
   if (!confirm('データファイルを再作成しますか？\n※既存データは削除されます。')) return;
   setLoading('ファイルを再作成中...');
   try {
@@ -2322,20 +2340,29 @@ function renderHomeBlock(container, home, idx) {
   div.className = 'home-block';
   div.style.cssText = 'border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px';
   div.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <input type="text" class="home-name-input form-input" value="${escHtml(home.name)}"
-             placeholder="住居名（例：下豊岡）" style="flex:1;margin:0">
-      <input type="number" class="home-capacity-input form-input" value="${home.capacity || ''}"
-             placeholder="定員" title="定員（稼働率計算に使用）" style="width:70px;margin:0;flex-shrink:0">
-      <button class="btn-icon" onclick="this.closest('.home-block').remove()" title="住居削除" style="flex-shrink:0">✕</button>
-    </div>
-    <div class="resident-name-list" style="margin-bottom:8px">
-      ${(home.residents || []).map((r, i) => _residentItemHtml(r, i)).join('')}
-    </div>
-    <button class="btn-add-resident" style="font-size:12px;padding:6px 12px" onclick="addResidentToBlock(this)">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-      利用者を追加
-    </button>
+    <details ${home.name ? '' : 'open'}>
+      <summary style="cursor:pointer;padding:10px 4px;font-size:14px;font-weight:700;color:var(--primary);user-select:none">
+        <span class="home-summary-name">${escHtml(home.name || '新しい住居')}</span>
+        <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">利用者${(home.residents || []).length}名${home.capacity ? '・定員' + home.capacity : ''}</span>
+      </summary>
+      <div style="padding:6px 0 10px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+          <input type="text" class="home-name-input form-input" value="${escHtml(home.name)}"
+                 placeholder="住居名（例：下豊岡）" style="flex:1;margin:0"
+                 oninput="this.closest('.home-block').querySelector('.home-summary-name').textContent = this.value || '新しい住居'">
+          <input type="number" class="home-capacity-input form-input" value="${home.capacity || ''}"
+                 placeholder="定員" title="定員（稼働率計算に使用）" style="width:70px;margin:0;flex-shrink:0">
+          <button class="btn-icon" onclick="this.closest('.home-block').remove()" title="住居削除" style="flex-shrink:0">✕</button>
+        </div>
+        <div class="resident-name-list" style="margin-bottom:8px">
+          ${(home.residents || []).map((r, i) => _residentItemHtml(r, i)).join('')}
+        </div>
+        <button class="btn-add-resident" style="font-size:12px;padding:6px 12px" onclick="addResidentToBlock(this)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          利用者を追加
+        </button>
+      </div>
+    </details>
   `;
   container.appendChild(div);
 }
@@ -3420,6 +3447,10 @@ function clearForm() {
 // SCREEN MANAGEMENT
 // ==============================
 function showScreen(name) {
+  // 再読み込み後に同じ画面へ戻れるよう、現在の画面を記憶（loading/login/successは対象外）
+  if (['main', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice', 'kasan', 'kadou'].includes(name)) {
+    try { sessionStorage.setItem('nippou_last_screen', name); } catch {}
+  }
   ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice', 'kasan', 'kadou'].forEach(s => {
     const el = document.getElementById(`screen-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
@@ -3894,6 +3925,24 @@ function _openInputTab(date, slot, residentName) {
   const q = new URLSearchParams({ jump: 'input', date, slot });
   if (home) q.set('home', home);
   window.open(location.pathname + '?' + q.toString(), '_blank');
+}
+
+// 再読み込み前に開いていた画面へ復元（各画面の初期化関数を経由して開く）
+function _restoreLastScreen(last) {
+  if (!last || last === 'main') return;
+  const openers = {
+    viewer:   showViewer,
+    settings: showSettings,
+    usage:    showUsageScreen,
+    budget:   showBudgetScreen,
+    jinin:    showJininScreen,
+    invoice:  showInvoiceScreen,
+    kasan:    showKasanScreen,
+    kadou:    showKadouScreen,
+  };
+  if (openers[last]) {
+    try { openers[last](); } catch (e) { console.warn('画面復元に失敗:', e); }
+  }
 }
 
 // 起動時のURLパラメータ処理（別タブジャンプの受け側）。ジャンプした場合 true を返す
@@ -7368,6 +7417,7 @@ async function deleteKasanRecord(excelRow) {
 // ==============================
 
 async function saveClaudeApiKey() {
+  if (!_requireSecurityPass('APIキーの設定・変更')) return;
   const key = (document.getElementById('settings-claude-apikey')?.value || '').trim();
   if (key && !key.startsWith('sk-ant-')) {
     showToast('APIキーの形式が正しくありません（sk-ant-で始まる値を入力してください）', 'error');

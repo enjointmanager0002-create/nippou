@@ -1464,9 +1464,14 @@
     <div id="invoice-tab-sr" class="hidden" style="padding:12px">
       <div class="card">
         <div class="card-title">社労士提出シート作成</div>
-        <div style="margin-bottom:12px"><label class="form-label">対象月</label><input type="month" id="inv-sr-month" class="form-input" style="margin:0;max-width:180px"></div>
+        <div style="margin-bottom:12px"><label class="form-label">対象月</label><input type="month" id="inv-sr-month" class="form-input" style="margin:0;max-width:180px" onchange="_renderCommuteArea()"></div>
         <button class="btn btn-primary" style="margin-bottom:8px" onclick="generateSrExcel()">Excelを作成・ダウンロード</button>
         <div id="inv-sr-status" style="font-size:12px;color:var(--text-muted)"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">交通費計算（通勤＋対面研修）</div>
+        <div id="commute-area"></div>
       </div>
       <div class="card" style="margin-top:12px">
         <div class="card-title">スタッフ順序設定</div>
@@ -1522,7 +1527,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.04-9';
+const APP_VERSION = 'v2026.07.06-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1772,6 +1777,8 @@ async function afterLogin() {
     const jumped = await _handleJumpParams();
     // 再読み込み前に開いていた画面へ復元（ジャンプ時はそちらを優先）
     if (!jumped) _restoreLastScreen(lastScreen);
+    // 交通費設定もバックグラウンドで同期
+    loadCommuteFromCloud().catch(() => {});
     // 設定のクラウド同期はバックグラウンドで実行（タイムアウトしてもUI表示を妨げない）
     loadSettingsFromCloud().then(() => {
       loadSettings();
@@ -5485,6 +5492,8 @@ async function handleAttendanceCsvUpload(input) {
     _saveAttendanceStore(store);
     _renderAttendanceStoredMonths();
     showToast(`勤怠データを登録しました（${months.map(m => { const [y,mo]=m.split('-'); return `${y}年${parseInt(mo)}月`; }).join('・')}）`, 'success');
+    // 対面研修シフトの検知（交通費計算用）
+    _detectTrainingDays(text);
     // 人員実績表が表示中なら再描画して照合結果を反映
     if (document.getElementById('jinin-result') && document.getElementById('jinin-result').innerHTML.trim()) {
       renderJinin();
@@ -5975,7 +5984,7 @@ function showInvoiceTab(tab) {
   });
   if (tab === 'residents') _renderInvResidents();
   if (tab === 'forms')     _renderInvForms();
-  if (tab === 'sr')        _renderSrStaff();
+  if (tab === 'sr')        { _renderSrStaff(); _renderCommuteArea(); }
 }
 
 // ---------- 入居者情報 ----------
@@ -6744,6 +6753,552 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
   return items;
 }
 
+// ---------- 交通費計算（通勤＋対面研修） ----------
+const COMMUTE_KEY  = 'nippou_commute';
+const COMMUTE_FILE = '交通費設定.json';
+const COMMUTE_RATE = 35; // 円/km
+
+// 氏名・場所名の正規化（空白除去＋異体字統一）
+const _COMMUTE_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
+function _commuteNorm(s) {
+  return String(s || '').replace(/[\s　]+/g, '').replace(/[髙﨑嵜齋齊邊邉濵桒]/g, c => _COMMUTE_FOLD[c]).trim();
+}
+
+function _getCommute() {
+  const d = JSON.parse(localStorage.getItem(COMMUTE_KEY) || '{}');
+  d.staffAddr      = d.staffAddr      || {};  // 正規化氏名 → {code, addr, disp}
+  d.locations      = d.locations      || {};  // 勤務地名 → 住所
+  d.distances      = d.distances      || {};  // "正規化氏名|場所名" → 片道km
+  d.trainingPlaces = d.trainingPlaces || {};  // 研修場所名 → 住所
+  d.trainingDays   = d.trainingDays   || {};  // ym → [{date, name}]
+  d.trainingAssign = d.trainingAssign || {};  // "date|正規化氏名" → 研修場所名
+  d.attendDays     = d.attendDays     || {};  // ym → [{name, loc, days}]
+  d.geoCache       = d.geoCache       || {};  // 住所 → [lat,lon] | null
+  return d;
+}
+
+function _setCommute(d) {
+  localStorage.setItem(COMMUTE_KEY, JSON.stringify(d));
+  _saveCommuteToCloud(d); // バックグラウンドで実行（失敗してもローカルには保存済み）
+}
+
+async function _saveCommuteToCloud(d) {
+  try {
+    await initSharepointDrive();
+    const token = await getToken();
+    const bytes = new TextEncoder().encode(JSON.stringify(d, null, 2));
+    const url = `https://graph.microsoft.com/v1.0` +
+      driveApi(`/root:/${CONFIG.excelFolderName}/${COMMUTE_FILE}:/content`);
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: bytes,
+    });
+    if (!res.ok) throw new Error(`保存エラー: ${res.status}`);
+  } catch (e) {
+    console.warn('交通費設定のクラウド保存に失敗（ローカルには保存済み）:', e.message);
+  }
+}
+
+async function loadCommuteFromCloud() {
+  try {
+    await initSharepointDrive();
+    const token = await getToken();
+    const url = `https://graph.microsoft.com/v1.0` +
+      driveApi(`/root:/${CONFIG.excelFolderName}/${COMMUTE_FILE}:/content`);
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem(COMMUTE_KEY, JSON.stringify(data));
+    }
+  } catch (e) {
+    console.warn('交通費設定のクラウド読み込みをスキップ:', e.message);
+  }
+}
+
+// --- マスタ取込（addresses.xlsx / 距離マスタ.xlsx）---
+async function handleCommuteAddressesUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const wb = await _readXlsxFile(file);
+    const d = _getCommute();
+    let staffCnt = 0, locCnt = 0;
+
+    const wsS = wb.Sheets['職員マスタ'];
+    if (!wsS) throw new Error('「職員マスタ」シートが見つかりません');
+    const rowsS = XLSX.utils.sheet_to_json(wsS, { header: 1 });
+    const headS = (rowsS[0] || []).map(v => String(v || ''));
+    const hasCode = headS.some(h => h.includes('コード'));
+    for (let i = 1; i < rowsS.length; i++) {
+      const r = rowsS[i] || [];
+      const code = hasCode ? r[0] : null;
+      const name = String((hasCode ? r[1] : r[0]) || '').trim();
+      const addr = String((hasCode ? r[2] : r[1]) || '').trim();
+      if (!name || !addr) continue;
+      d.staffAddr[_commuteNorm(name)] = { code: code != null ? Number(code) : null, addr, disp: name };
+      staffCnt++;
+    }
+
+    const wsL = wb.Sheets['勤務地マスタ'];
+    if (!wsL) throw new Error('「勤務地マスタ」シートが見つかりません');
+    const rowsL = XLSX.utils.sheet_to_json(wsL, { header: 1 });
+    for (let i = 1; i < rowsL.length; i++) {
+      const r = rowsL[i] || [];
+      const name = String(r[0] || '').trim();
+      const addr = String(r[1] || '').trim();
+      if (!name || !addr) continue;
+      d.locations[name] = addr;
+      locCnt++;
+    }
+
+    _setCommute(d);
+    showToast(`住所マスタを取込みました（職員${staffCnt}名・勤務地${locCnt}件）`, 'success');
+    _renderCommuteArea();
+  } catch (e) {
+    showToast(`取込エラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+  input.value = '';
+}
+
+async function handleCommuteDistUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    const wb = await _readXlsxFile(file);
+    const ws = wb.Sheets['片道距離(km)'];
+    if (!ws) throw new Error('「片道距離(km)」シートが見つかりません');
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+    const head = (rows[0] || []).map(v => String(v || '').trim());
+    const d = _getCommute();
+    let cnt = 0;
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i] || [];
+      const name = String(r[0] || '').trim();
+      if (!name) continue;
+      for (let c = 2; c < head.length; c++) {
+        const loc = head[c];
+        const v = r[c];
+        if (!loc || v == null || v === '') continue;
+        const km = Number(v);
+        if (isNaN(km) || km <= 0) continue;
+        d.distances[`${_commuteNorm(name)}|${loc}`] = km;
+        cnt++;
+      }
+    }
+    _setCommute(d);
+    showToast(`距離マスタを取込みました（${cnt}件）`, 'success');
+    _renderCommuteArea();
+  } catch (e) {
+    showToast(`取込エラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+  input.value = '';
+}
+
+// --- MF勤怠「勤怠項目別集計」CSV → 住居別出勤日数 ---
+async function handleCommuteAttendUpload(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const ym = document.getElementById('inv-sr-month')?.value;
+  if (!ym) { showToast('先に対象月を選択してください', 'error'); input.value = ''; return; }
+  try {
+    const buffer = await file.arrayBuffer();
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buffer); }
+    catch (_) { text = new TextDecoder('shift-jis').decode(buffer); }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+    const rows = _parseCsvFull(text);
+    if (rows.length < 2) throw new Error('データ行がありません');
+    const header = rows[0].map(h => String(h || ''));
+
+    // 「出勤日数（…）（…place◯◯）」列を住居ごとにグループ化
+    const locCols = {};
+    header.forEach((h, i) => {
+      if (!h.includes('出勤日数') || !/place/i.test(h)) return;
+      const m = h.match(/[Pp]lace(.+?)[）\)]\s*$/);
+      if (m) (locCols[m[1].trim()] = locCols[m[1].trim()] || []).push(i);
+    });
+    if (!Object.keys(locCols).length) throw new Error('One\'s place の出勤日数列が見つかりません。「勤怠項目別集計」のCSVか確認してください');
+
+    const records = [];
+    for (let ri = 1; ri < rows.length; ri++) {
+      const name = String(rows[ri][1] || '').trim();
+      if (!name) continue;
+      for (const [loc, cols] of Object.entries(locCols)) {
+        let days = 0;
+        for (const c of cols) {
+          const v = Number(String(rows[ri][c] || '0').trim());
+          if (!isNaN(v)) days += v;
+        }
+        if (days > 0) records.push({ name, loc, days });
+      }
+    }
+    const d = _getCommute();
+    d.attendDays[ym] = records;
+    _setCommute(d);
+    showToast(`${ym.replace('-', '年')}月の出勤日数を登録しました（${records.length}件・${new Set(records.map(r => r.name)).size}名）`, 'success');
+    _renderCommuteArea();
+  } catch (e) {
+    showToast(`読み込みエラー: ${e.message}`, 'error');
+    console.error(e);
+  }
+  input.value = '';
+}
+
+// --- 対面研修シフトの検知（人員実績表の勤怠CSVアップロード時に呼ばれる）---
+function _detectTrainingDays(csvText) {
+  try {
+    const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+    const byYm = {};
+    for (let li = 1; li < lines.length; li++) {
+      const cols = _parseCsvLine(lines[li]);
+      if (cols.length < 10) continue;
+      if (!String(cols[9] || '').includes('対面研修')) continue;
+      const name = String(cols[1] || '').trim();
+      const dp = String(cols[2] || '').trim().split('/');
+      if (dp.length !== 3 || !name) continue;
+      const date = `${dp[0]}-${dp[1].padStart(2, '0')}-${dp[2].padStart(2, '0')}`;
+      (byYm[date.slice(0, 7)] = byYm[date.slice(0, 7)] || []).push({ date, name });
+    }
+    const months = Object.keys(byYm);
+    if (!months.length) return;
+    const d = _getCommute();
+    for (const ym of months) {
+      const seen = new Set();
+      d.trainingDays[ym] = [...(d.trainingDays[ym] || []), ...byYm[ym]].filter(t => {
+        const k = `${t.date}|${_commuteNorm(t.name)}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+    }
+    _setCommute(d);
+    showToast(`対面研修を検知しました（${months.map(ym => `${ym.replace('-', '年')}月${byYm[ym].length}件`).join('・')}）。社労士シートタブで研修場所を割り当ててください`, 'info');
+  } catch (e) { console.warn('対面研修検知エラー:', e); }
+}
+
+// --- 研修場所 ---
+function commuteAddTrainingPlace() {
+  const name = document.getElementById('commute-tp-name')?.value.trim();
+  const addr = document.getElementById('commute-tp-addr')?.value.trim();
+  if (!name || !addr) { showToast('研修場所の名称と住所を入力してください', 'error'); return; }
+  const d = _getCommute();
+  d.trainingPlaces[name] = addr;
+  _setCommute(d);
+  showToast(`研修場所「${name}」を登録しました`, 'success');
+  _renderCommuteArea();
+}
+
+function commuteDeleteTrainingPlace(name) {
+  if (!confirm(`研修場所「${name}」を削除しますか？`)) return;
+  const d = _getCommute();
+  delete d.trainingPlaces[name];
+  _setCommute(d);
+  _renderCommuteArea();
+}
+
+function commuteAssignTraining(key, place) {
+  const d = _getCommute();
+  if (place) d.trainingAssign[key] = place;
+  else delete d.trainingAssign[key];
+  _setCommute(d);
+}
+
+// --- 距離の手動登録 ---
+function commuteSaveDistance(inputEl) {
+  const key = inputEl.dataset.key;
+  const km = Number(inputEl.value);
+  if (!key || isNaN(km) || km <= 0) { showToast('片道距離(km)を正しく入力してください', 'error'); return; }
+  const d = _getCommute();
+  d.distances[key] = km;
+  _setCommute(d);
+  showToast('距離を保存しました', 'success');
+  _renderCommutePreview();
+}
+
+// --- 交通費計算本体 ---
+// 返り値: { perStaff: {norm: {disp, km, fee}}, missing: [{disp, place, key, staffAddr, placeAddr}], unassigned: [{date, name}] }
+function _calcCommute(ym) {
+  const d = _getCommute();
+  const perStaff = {};
+  const missingMap = {};
+  const unassigned = [];
+
+  const addKm = (norm, disp, km) => {
+    if (!perStaff[norm]) perStaff[norm] = { disp, km: 0 };
+    perStaff[norm].km += km;
+  };
+  const addMissing = (disp, norm, place) => {
+    const key = `${norm}|${place}`;
+    if (!missingMap[key]) {
+      missingMap[key] = {
+        disp, place, key,
+        staffAddr: d.staffAddr[norm]?.addr || '',
+        placeAddr: d.locations[place] || d.trainingPlaces[place] || '',
+      };
+    }
+  };
+
+  // 通常の通勤（勤怠項目別集計CSVより）
+  for (const rec of (d.attendDays[ym] || [])) {
+    const norm = _commuteNorm(rec.name);
+    // 住居名マッチ（完全一致 → 部分一致）
+    let locKey = null;
+    const recN = _commuteNorm(rec.loc);
+    for (const k of Object.keys(d.locations)) { if (_commuteNorm(k) === recN) { locKey = k; break; } }
+    if (!locKey) {
+      for (const k of Object.keys(d.locations)) {
+        const kn = _commuteNorm(k);
+        if (recN.includes(kn) || kn.includes(recN)) { locKey = k; break; }
+      }
+    }
+    const place = locKey || rec.loc;
+    const dist = d.distances[`${norm}|${place}`];
+    if (dist == null) { addMissing(rec.name, norm, place); continue; }
+    addKm(norm, rec.name, rec.days * dist * 2);
+  }
+
+  // 対面研修
+  for (const t of (d.trainingDays[ym] || [])) {
+    const norm = _commuteNorm(t.name);
+    const place = d.trainingAssign[`${t.date}|${norm}`];
+    if (!place) { unassigned.push(t); continue; }
+    const dist = d.distances[`${norm}|${place}`];
+    if (dist == null) { addMissing(t.name, norm, place); continue; }
+    addKm(norm, t.name, dist * 2);
+  }
+
+  // 交通費: 距離合計を0.1km丸め → ×35円を四捨五入（職員別月間合計シート方式）
+  for (const norm of Object.keys(perStaff)) {
+    const km = Math.round(perStaff[norm].km * 10) / 10;
+    perStaff[norm].km = km;
+    perStaff[norm].fee = Math.round(km * COMMUTE_RATE);
+  }
+  return { perStaff, missing: Object.values(missingMap), unassigned };
+}
+
+// --- 距離の自動計算（Nominatim + OSRM。Pythonツールと同一ロジック）---
+function _commuteAddrVariants(address) {
+  const PREF = '群馬県';
+  let addr = String(address).trim();
+  if (!addr.startsWith(PREF)) addr = PREF + addr;
+  addr = addr.replace(/大字|字/g, '');
+  const variants = [addr];
+  const m = addr.match(/(\d+[-－]\d+)/);
+  if (m) {
+    const trimmed = addr.slice(0, m.index + m[1].length);
+    if (trimmed !== addr) variants.push(trimmed);
+  }
+  const m2 = addr.match(/\d/);
+  if (m2) {
+    const townOnly = addr.slice(0, m2.index).replace(/\s+$/, '');
+    if (townOnly && !variants.includes(townOnly)) variants.push(townOnly);
+  }
+  return variants;
+}
+
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function _commuteGeocode(addr, d) {
+  if (addr in d.geoCache) return d.geoCache[addr];
+  let result = null;
+  for (const q of _commuteAddrVariants(addr)) {
+    try {
+      const res = await fetch('https://nominatim.openstreetmap.org/search?' +
+        new URLSearchParams({ q, format: 'json', limit: '1', countrycodes: 'jp' }));
+      const js = await res.json();
+      if (js.length) { result = [Number(js[0].lat), Number(js[0].lon)]; }
+    } catch (e) { console.warn('geocode error:', e.message); }
+    await _sleep(1100); // Nominatim利用規約: 1秒/リクエスト
+    if (result) break;
+  }
+  d.geoCache[addr] = result;
+  return result;
+}
+
+async function commuteAutoCalcMissing() {
+  const ym = document.getElementById('inv-sr-month')?.value;
+  if (!ym) return;
+  const { missing } = _calcCommute(ym);
+  const targets = missing.filter(m => m.staffAddr && m.placeAddr);
+  if (!targets.length) {
+    showToast('自動計算できる項目がありません（自宅住所または場所の住所が未登録）', 'error');
+    return;
+  }
+  const statusEl = document.getElementById('commute-autocalc-status');
+  const d = _getCommute();
+  let ok = 0, ng = 0;
+  for (let i = 0; i < targets.length; i++) {
+    const m = targets[i];
+    if (statusEl) statusEl.textContent = `自動計算中... ${i + 1}/${targets.length}（${m.disp} × ${m.place}）`;
+    try {
+      const o = await _commuteGeocode(m.staffAddr, d);
+      const p = await _commuteGeocode(m.placeAddr, d);
+      if (!o || !p) { ng++; continue; }
+      const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${o[1]},${o[0]};${p[1]},${p[0]}?overview=false`);
+      const js = await res.json();
+      if (js.code === 'Ok' && js.routes?.length) {
+        d.distances[m.key] = Math.round(js.routes[0].distance / 100) / 10;
+        ok++;
+      } else ng++;
+    } catch (e) { console.warn(e); ng++; }
+  }
+  _setCommute(d);
+  if (statusEl) statusEl.textContent = '';
+  showToast(`自動計算完了: ${ok}件成功${ng ? `・${ng}件失敗（手入力してください）` : ''}。距離は一覧で確認・修正できます`, ng ? 'error' : 'success');
+  _renderCommutePreview();
+}
+
+// --- UI描画 ---
+function _renderCommuteArea() {
+  const el = document.getElementById('commute-area');
+  if (!el) return;
+  const ym = document.getElementById('inv-sr-month')?.value || '';
+  const d = _getCommute();
+  const nStaff = Object.keys(d.staffAddr).length;
+  const nLoc   = Object.keys(d.locations).length;
+  const nDist  = Object.keys(d.distances).length;
+  const attend = d.attendDays[ym] || [];
+  const training = d.trainingDays[ym] || [];
+  const tpNames = Object.keys(d.trainingPlaces);
+
+  el.innerHTML = `
+    <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">
+      マスタ登録状況: 職員住所 ${nStaff}名 / 勤務地 ${nLoc}件 / 距離 ${nDist}件 / 研修場所 ${tpNames.length}件
+    </div>
+
+    <details style="margin-bottom:10px" ${nStaff ? '' : 'open'}>
+      <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--primary)">マスタ取込（初回のみ）</summary>
+      <div style="padding:8px 0;display:grid;gap:8px">
+        <label class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px;display:inline-block;cursor:pointer">
+          住所マスタ（addresses.xlsx）を取込
+          <input type="file" accept=".xlsx" style="display:none" onchange="handleCommuteAddressesUpload(this)">
+        </label>
+        <label class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px;display:inline-block;cursor:pointer">
+          距離マスタ（距離マスタ_全職員×全勤務地.xlsx）を取込
+          <input type="file" accept=".xlsx" style="display:none" onchange="handleCommuteDistUpload(this)">
+        </label>
+        <div style="font-size:11px;color:var(--text-muted)">通勤距離計算フォルダの「②マスタ・設定」にあるファイルをそのまま取込めます。再取込すると上書き更新されます。</div>
+      </div>
+    </details>
+
+    <details style="margin-bottom:10px">
+      <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--primary)">研修場所の登録（${tpNames.length}件）</summary>
+      <div style="padding:8px 0">
+        ${tpNames.map(n => `
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px">
+            <span style="font-weight:600">${escHtml(n)}</span>
+            <span style="color:var(--text-muted);flex:1">${escHtml(d.trainingPlaces[n])}</span>
+            <button class="btn btn-secondary" style="width:auto;padding:2px 8px;font-size:11px;color:#c62828;border-color:#c62828" onclick="commuteDeleteTrainingPlace('${escHtml(n)}')">削除</button>
+          </div>`).join('')}
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <input id="commute-tp-name" class="form-input" placeholder="研修場所名" style="margin:0;width:140px;font-size:12px">
+          <input id="commute-tp-addr" class="form-input" placeholder="住所（例: 高崎市◯◯町1-2-3）" style="margin:0;flex:1;min-width:200px;font-size:12px">
+          <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="commuteAddTrainingPlace()">追加</button>
+        </div>
+      </div>
+    </details>
+
+    <div style="margin-bottom:10px">
+      <label class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px;display:inline-block;cursor:pointer">
+        ${ym ? ym.replace('-', '年') + '月' : '対象月'}の勤怠項目別集計CSVをアップロード
+        <input type="file" accept=".csv" style="display:none" onchange="handleCommuteAttendUpload(this)">
+      </label>
+      <span style="font-size:12px;margin-left:8px;color:${attend.length ? 'var(--success, #2e7d32)' : 'var(--text-muted)'}">
+        ${attend.length ? `登録済み（${attend.length}件・${new Set(attend.map(r => r.name)).size}名）` : '未登録'}
+      </span>
+    </div>
+
+    ${training.length ? `
+    <div style="margin-bottom:10px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">対面研修の検知（${training.length}件）— 研修場所を割り当ててください</div>
+      ${training.map(t => {
+        const key = `${t.date}|${_commuteNorm(t.name)}`;
+        const cur = d.trainingAssign[key] || '';
+        return `
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px">
+          <span style="white-space:nowrap">${escHtml(t.date)}</span>
+          <span style="font-weight:600;min-width:90px">${escHtml(t.name)}</span>
+          <select class="form-select" style="margin:0;width:auto;font-size:12px;padding:4px 8px" onchange="commuteAssignTraining('${escHtml(key)}', this.value)">
+            <option value="">場所を選択</option>
+            ${tpNames.map(n => `<option value="${escHtml(n)}" ${cur === n ? 'selected' : ''}>${escHtml(n)}</option>`).join('')}
+          </select>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+
+    <button class="btn btn-secondary" style="width:100%;font-size:13px" onclick="_renderCommutePreview()">交通費を計算（プレビュー）</button>
+    <div id="commute-preview" style="margin-top:10px"></div>
+  `;
+}
+
+function _renderCommutePreview() {
+  const el = document.getElementById('commute-preview');
+  if (!el) return;
+  const ym = document.getElementById('inv-sr-month')?.value;
+  if (!ym) { el.innerHTML = ''; return; }
+  const d = _getCommute();
+  if (!(d.attendDays[ym] || []).length && !(d.trainingDays[ym] || []).length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;text-align:center">対象月の勤怠項目別集計CSVをアップロードしてください</div>';
+    return;
+  }
+  const { perStaff, missing, unassigned } = _calcCommute(ym);
+
+  const TD = 'padding:4px 8px;border:1px solid #e0e0e0;font-size:12px';
+  let html = '';
+
+  if (unassigned.length) {
+    html += `<div style="font-size:12px;color:#e65100;background:#fff8e1;border-radius:8px;padding:8px 10px;margin-bottom:8px">
+      対面研修${unassigned.length}件に研修場所が未割当です（上の一覧で選択してください）。未割当分は交通費に含まれません。</div>`;
+  }
+
+  if (missing.length) {
+    html += `
+      <div style="font-size:12px;font-weight:700;color:#c62828;margin-bottom:4px">距離未登録（${missing.length}件）— 片道kmを入力して保存してください</div>
+      ${missing.map(m => `
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px">
+          <span style="font-weight:600;min-width:90px">${escHtml(m.disp)}</span>
+          <span style="min-width:80px">× ${escHtml(m.place)}</span>
+          <input type="number" step="0.1" class="form-input" data-key="${escHtml(m.key)}" placeholder="片道km" style="margin:0;width:90px;font-size:12px">
+          <button class="btn btn-secondary" style="width:auto;padding:4px 10px;font-size:11px" onclick="commuteSaveDistance(this.previousElementSibling)">保存</button>
+          ${(!m.staffAddr || !m.placeAddr) ? '<span style="color:#c62828;font-size:11px">住所未登録のため自動計算不可</span>' : ''}
+        </div>`).join('')}
+      <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px;margin:4px 0 10px" onclick="commuteAutoCalcMissing()">未登録の距離を自動計算（地図サービス使用・数十秒かかります）</button>
+      <div id="commute-autocalc-status" style="font-size:11px;color:var(--text-muted);margin-bottom:8px"></div>`;
+  }
+
+  const names = Object.keys(perStaff).sort((a, b) => {
+    const ca = d.staffAddr[a]?.code ?? 999999, cb = d.staffAddr[b]?.code ?? 999999;
+    return ca - cb || a.localeCompare(b);
+  });
+  if (names.length) {
+    html += `
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">交通費プレビュー（${ym.replace('-', '年')}月・${names.length}名）</div>
+      <div style="overflow-x:auto;border:1px solid #ddd;border-radius:8px">
+        <table style="border-collapse:collapse;min-width:100%">
+          <thead><tr>
+            <th style="${TD};background:#f5f5f5">個人コード</th><th style="${TD};background:#f5f5f5">職員名</th>
+            <th style="${TD};background:#f5f5f5">月間距離(km)</th><th style="${TD};background:#f5f5f5">交通費(円)</th>
+          </tr></thead>
+          <tbody>
+            ${names.map(n => `<tr>
+              <td style="${TD};text-align:right">${d.staffAddr[n]?.code ?? ''}</td>
+              <td style="${TD}">${escHtml(perStaff[n].disp)}</td>
+              <td style="${TD};text-align:right">${perStaff[n].km.toFixed(1)}</td>
+              <td style="${TD};text-align:right;font-weight:700">${perStaff[n].fee.toLocaleString()}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">この金額が社労士シートの「交通費」列に自動反映されます（距離合計を0.1km単位に丸め × ${COMMUTE_RATE}円）。</div>`;
+  }
+
+  el.innerHTML = html || '<div style="font-size:12px;color:var(--text-muted);padding:8px">計算対象がありません</div>';
+}
+
 // ---------- 社労士シート ----------
 function _renderSrStaff() {
   const el = document.getElementById('sr-staff-list');
@@ -6900,10 +7455,16 @@ async function generateSrExcel() {
       tatekaeMap[n] = (tatekaeMap[n]||0) + (s.km||0) * 35;
     }
 
+    // 交通費（勤怠項目別集計CSV＋対面研修から計算。未登録分は0のまま出力される）
+    const commute = _calcCommute(ymStr);
+    if (commute.missing.length || commute.unassigned.length) {
+      showToast(`交通費に未計算分があります（距離未登録${commute.missing.length}件・研修場所未割当${commute.unassigned.length}件）。交通費計算カードで確認してください`, 'error');
+    }
+
     const headerRow = ['個人コード', '氏　　名', '特別手当', '食事代', '立替精算分', '交通費'];
     const dataRows = staffList.map(staff => {
       const n = normN(staff.name);
-      return [staff.code||'', staff.name||'', teateMap[n]||0, mealMap[n]||0, tatekaeMap[n]||0, 0];
+      return [staff.code||'', staff.name||'', teateMap[n]||0, mealMap[n]||0, tatekaeMap[n]||0, commute.perStaff[n]?.fee || 0];
     });
 
     const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);

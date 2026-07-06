@@ -1476,7 +1476,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.04-2';
+const APP_VERSION = 'v2026.07.04-3';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -6964,38 +6964,49 @@ async function submitKasanRecord() {
   }
 }
 
-// 加算記録シート・テーブルがなければ作成
+// 加算記録シートのAPIパス（シートIDで参照）
+async function _kasanSheetPath(createIfMissing) {
+  const base = `${driveItem(state.excelFileId)}/workbook`;
+  const ws = await callGraph(`${base}/worksheets`);
+  let sheet = (ws.value || []).find(w => w.name === KASAN_SHEET);
+  if (!sheet && createIfMissing) {
+    sheet = await callGraph(`${base}/worksheets/add`, 'POST', { name: KASAN_SHEET });
+  }
+  if (!sheet) throw new Error('加算記録シートが見つかりません');
+  return `${base}/worksheets/${encodeURIComponent(sheet.id)}`;
+}
+
+// 加算記録シート・テーブルがなければ作成（途中失敗からの再実行にも対応）
 async function ensureKasanTable() {
   if (state.kasanReady) return;
-  const tables = await callGraph(`${driveItem(state.excelFileId)}/workbook/tables`);
+  const base = `${driveItem(state.excelFileId)}/workbook`;
+  const tables = await callGraph(`${base}/tables`);
   if ((tables.value || []).some(t => t.name === KASAN_TABLE)) { state.kasanReady = true; return; }
 
-  try {
-    await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets/add`, 'POST', { name: KASAN_SHEET });
-  } catch (e) {
-    // 既にシートがある場合のエラーは無視
-    if (!String(e.message).includes('ItemAlreadyExists') && !String(e.message).includes('既に')) console.warn(e.message);
+  const wsPath = await _kasanSheetPath(true);
+
+  // シート上に既にテーブルがあれば（過去の作成が途中で止まった場合）それを利用して名前だけ設定
+  const st = await callGraph(`${wsPath}/tables`);
+  if ((st.value || []).length) {
+    await callGraph(`${base}/tables/${st.value[0].id}`, 'PATCH', { name: KASAN_TABLE });
+    state.kasanReady = true;
+    return;
   }
+
+  // ヘッダー行を書き込んでテーブル化。作成レスポンスのIDで名前を設定する
   const colEnd = String.fromCharCode(64 + KASAN_HEADERS.length);
-  await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(KASAN_SHEET)}/range(address='A1:${colEnd}1')`,
-    'PATCH', { values: [KASAN_HEADERS] });
-  await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(KASAN_SHEET)}/tables/add`,
-    'POST', { address: `A1:${colEnd}1`, hasHeaders: true });
-  // 追加されたテーブル（既存の日報テーブル以外）に名前を付ける
-  const t2 = await callGraph(`${driveItem(state.excelFileId)}/workbook/tables`);
-  const newT = (t2.value || []).find(t => t.name !== CONFIG.tableName && t.name !== KASAN_TABLE);
-  if (newT) {
-    await callGraph(`${driveItem(state.excelFileId)}/workbook/tables/${newT.id}`, 'PATCH', { name: KASAN_TABLE });
+  await callGraph(`${wsPath}/range(address='A1:${colEnd}1')`, 'PATCH', { values: [KASAN_HEADERS] });
+  const newTable = await callGraph(`${wsPath}/tables/add`, 'POST', { address: `A1:${colEnd}1`, hasHeaders: true });
+  if (newTable?.id) {
+    await callGraph(`${base}/tables/${newTable.id}`, 'PATCH', { name: KASAN_TABLE });
   }
   state.kasanReady = true;
 }
 
 async function readKasanRows() {
   await ensureKasanTable();
-  const range = await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(KASAN_SHEET)}/usedRange`);
+  const wsPath = await _kasanSheetPath(false);
+  const range = await callGraph(`${wsPath}/usedRange`);
   const startRow = (range.rowIndex || 0) + 1;
   const rows = [];
   const vals = range.values || [];

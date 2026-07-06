@@ -945,6 +945,12 @@
       </div>
 
       <div class="card">
+        <div class="card-title">稼働率レポート</div>
+        <p style="font-size:12px;color:#888;margin:0 0 12px">管轄・月を選択して住居ごとの稼働率（利用者延べ数÷延開所日数）を一覧表示します</p>
+        <button class="btn btn-primary" onclick="showKadouScreen()">稼働率を表示する</button>
+      </div>
+
+      <div class="card">
         <div class="card-title">請求書・社労士管理</div>
         <p style="font-size:12px;color:#888;margin:0 0 12px">入居者への請求書CSV（freee形式）と社労士提出Excelシートを作成します</p>
         <button class="btn btn-primary" onclick="showInvoiceScreen()">請求書・社労士管理を開く</button>
@@ -1264,6 +1270,44 @@
   </div>
 </div>
 
+<!-- KADOU SCREEN -->
+<div id="screen-kadou" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">稼働率レポート</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
+    </div>
+  </div>
+  <div class="app-content">
+    <div class="card">
+      <div class="card-title">対象設定</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">対象月</label>
+          <input type="month" id="kadou-month" class="form-input" style="margin:0">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">管轄</label>
+          <select id="kadou-jurisdiction" class="form-select" style="margin:0">
+            <option value="全て" selected>全て（管轄別に表示）</option>
+            <option value="高崎管轄">高崎管轄</option>
+            <option value="群馬管轄">群馬管轄</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" style="width:100%" onclick="renderKadou()">表示する</button>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:8px">
+        稼働率 = 利用者延べ数（いずれかの時間帯で利用「有」の日数）÷ 延開所日数（定員 × 月の日数）。定員は設定画面の住居ごとに入力してください。
+      </div>
+    </div>
+    <div id="kadou-result"></div>
+  </div>
+</div>
+
 <!-- KASAN SCREEN -->
 <div id="screen-kasan" class="hidden">
   <div class="app-header">
@@ -1397,7 +1441,7 @@
           <div><label class="form-label">実績月（食事・送迎等の集計）</label><input type="month" id="inv-csv-data-month" class="form-input" style="margin:0"></div>
           <div><label class="form-label">請求書番号（開始）</label><input type="number" id="inv-csv-no" class="form-input" style="margin:0" placeholder="例:1715"></div>
         </div>
-        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">実績月は請求月の前月が自動設定されます。食事回数・送迎代・貸付金はこの月の日報・Formsデータから集計されます。管轄は入居者情報の住居名で判定します（高崎管轄: 下豊岡・筑縄・若葉・下豊岡Ⅱ・浜尻・高関・南大類・鼻高 / それ以外は群馬管轄）。</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">実績月は請求月の前月が自動設定されます。食事回数・送迎代・貸付金はこの月の日報・Formsデータから集計されます。管轄は入居者情報の住居名で判定します（高崎管轄: 下豊岡・筑縄・双葉・下豊岡Ⅱ・浜尻・高関・南大類・鼻高 / それ以外は群馬管轄）。</div>
         <div style="margin-bottom:10px"><label class="form-label">件名テンプレート（一般住居）</label><input type="text" id="inv-csv-title" class="form-input" style="margin:0" placeholder="グループホームOne's place 利用料"></div>
         <div style="margin-bottom:10px"><label class="form-label">件名テンプレート（サテライト）</label><input type="text" id="inv-csv-title-sat" class="form-input" style="margin:0" placeholder="One's place サテライト 利用料"></div>
         <div style="margin-bottom:10px"><label class="form-label">備考（振込先情報）</label><textarea id="inv-csv-biko" class="form-input" rows="3" style="margin:0;resize:vertical"></textarea></div>
@@ -1476,7 +1520,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.04-4';
+const APP_VERSION = 'v2026.07.04-7';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -2055,6 +2099,7 @@ function _loadRawSettings() {
 function _collectHomesFromDOM() {
   return Array.from(document.querySelectorAll('.home-block')).map(block => ({
     name: block.querySelector('.home-name-input').value.trim(),
+    capacity: Number(block.querySelector('.home-capacity-input')?.value || 0),
     residents: Array.from(block.querySelectorAll('.resident-list-item')).map(item => {
       const name = item.querySelector('.resident-name-input').value.trim();
       const kubuns = Array.from(item.querySelectorAll('.kubun-period-row')).map(row => ({
@@ -2280,6 +2325,8 @@ function renderHomeBlock(container, home, idx) {
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
       <input type="text" class="home-name-input form-input" value="${escHtml(home.name)}"
              placeholder="住居名（例：下豊岡）" style="flex:1;margin:0">
+      <input type="number" class="home-capacity-input form-input" value="${home.capacity || ''}"
+             placeholder="定員" title="定員（稼働率計算に使用）" style="width:70px;margin:0;flex-shrink:0">
       <button class="btn-icon" onclick="this.closest('.home-block').remove()" title="住居削除" style="flex-shrink:0">✕</button>
     </div>
     <div class="resident-name-list" style="margin-bottom:8px">
@@ -2444,7 +2491,12 @@ async function _renderInputSummary() {
     const days = [];
     for (let d = 1; d <= lastDay; d++) days.push(`${ym}-${String(d).padStart(2, '0')}`);
 
-    const dayHead = days.map(d => `<th style="${TH};${scrollModeHead ? 'min-width:20px' : ''}">${parseInt(d.slice(8))}</th>`).join('');
+    const DOW = ['日', '月', '火', '水', '木', '金', '土'];
+    const dayHead = days.map(d => {
+      const dow = new Date(d + 'T00:00:00').getDay();
+      const wkend = dow === 0 || dow === 6;
+      return `<th style="${TH};line-height:1.2;${scrollModeHead ? 'min-width:20px;' : ''}${wkend ? 'color:#c62828' : ''}">${parseInt(d.slice(8))}<br><span style="font-size:8px;font-weight:400">${DOW[dow]}</span></th>`;
+    }).join('');
     let tbody = '';
     for (const nm of residents) {
       for (let si = 0; si < SLOTS.length; si++) {
@@ -3368,7 +3420,7 @@ function clearForm() {
 // SCREEN MANAGEMENT
 // ==============================
 function showScreen(name) {
-  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice', 'kasan'].forEach(s => {
+  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice', 'kasan', 'kadou'].forEach(s => {
     const el = document.getElementById(`screen-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
   });
@@ -6444,7 +6496,7 @@ const INV_CSV_HEADER = [
 ];
 
 // 高崎管轄の住居一覧（これ以外の住居はすべて群馬管轄）
-const INV_TAKASAKI_HOMES = ['下豊岡', '筑縄', '若葉', '下豊岡Ⅱ', '浜尻', '高関', '南大類', '鼻高'];
+const INV_TAKASAKI_HOMES = ['下豊岡', '筑縄', '双葉', '下豊岡Ⅱ', '浜尻', '高関', '南大類', '鼻高'];
 
 function _invMatchesJurisdiction(home, jurisdiction) {
   if (jurisdiction === '全て') return true;
@@ -6822,6 +6874,154 @@ async function generateSrExcel() {
 function _parseTeateAmount(typeStr) {
   const m = String(typeStr||'').match(/(\d{3,6})円/);
   return m ? parseInt(m[1]) : 5000;
+}
+
+// ==============================
+// 稼働率レポート
+// ==============================
+let _kadouTsv = '';
+
+function showKadouScreen() {
+  const now = new Date();
+  document.getElementById('kadou-month').value =
+    `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  document.getElementById('kadou-result').innerHTML = '';
+  _kadouTsv = '';
+  showScreen('kadou');
+}
+
+async function renderKadou() {
+  const ym    = document.getElementById('kadou-month').value;
+  const juris = document.getElementById('kadou-jurisdiction').value;
+  const el    = document.getElementById('kadou-result');
+  if (!ym) { showToast('対象月を選択してください', 'error'); return; }
+  el.innerHTML = '<div class="card" style="color:var(--text-muted);font-size:13px;padding:16px">読み込み中...</div>';
+  try {
+    const [y, m] = ym.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const { homes } = getSettings();
+    const normH = s => String(s || '').replace(/[\s　]+/g, '').replace(/住居$/, '');
+
+    // 利用者延べ数: 住居ごとに「いずれかの時間帯で利用有」の (利用者×日付) をユニークカウント
+    const allRows = await readExcelAllRows();
+    const useSet = {};
+    for (const r of allRows) {
+      const d = _toDateStr(r.values[VH['報告日']]);
+      if (!d.startsWith(ym)) continue;
+      if (String(r.values[VH['利用の有無']] || '') !== '有') continue;
+      const hn = normH(r.values[VH['ホーム名']]);
+      const name = String(r.values[VH['利用者名']] || '');
+      if (!hn || !name) continue;
+      (useSet[hn] = useSet[hn] || new Set()).add(`${name}_${d}`);
+    }
+
+    const buildRows = homeList => homeList.map(h => {
+      const cap   = h.capacity || 0;
+      const nobe  = (useSet[normH(h.name)]?.size) || 0;
+      const denom = cap * daysInMonth;
+      return { name: h.name, cap, denom, nobe, rate: denom > 0 ? nobe / denom * 100 : null };
+    });
+
+    const sections = (juris === '全て' ? ['高崎管轄', '群馬管轄'] : [juris]).map(j => ({
+      title: j,
+      rows: buildRows((homes || []).filter(h => h.name && _invMatchesJurisdiction(h.name, j))),
+    }));
+
+    const TD = 'padding:5px 10px;border:1px solid #e0e0e0;font-size:12px;text-align:right';
+    const TDL = 'padding:5px 10px;border:1px solid #e0e0e0;font-size:12px';
+    const TH = 'padding:5px 10px;border:1px solid #ccc;background:#f5f5f5;font-size:12px;white-space:nowrap';
+    const fmtRate = r => r == null ? '<span style="color:#c62828">定員未設定</span>' : `${r.toFixed(1)}%`;
+
+    let html = '';
+    const tsvLines = [['管轄', '住居', '定員', '延開所日数', '利用者延べ数', '稼働率'].join('\t')];
+    let gNobe = 0, gDenom = 0;
+
+    for (const sec of sections) {
+      if (!sec.rows.length) continue;
+      const sNobe  = sec.rows.reduce((s, r) => s + r.nobe, 0);
+      const sDenom = sec.rows.reduce((s, r) => s + r.denom, 0);
+      gNobe += sNobe; gDenom += sDenom;
+      const sRate = sDenom > 0 ? sNobe / sDenom * 100 : null;
+
+      html += `
+        <div class="card" style="margin-top:12px">
+          <div class="card-title">${escHtml(sec.title)}（${y}年${m}月・${daysInMonth}日）</div>
+          <div style="overflow-x:auto">
+            <table style="border-collapse:collapse;min-width:100%">
+              <thead><tr>
+                <th style="${TH};text-align:left">住居</th><th style="${TH}">定員</th>
+                <th style="${TH}">延開所日数</th><th style="${TH}">利用者延べ数</th><th style="${TH}">稼働率</th>
+              </tr></thead>
+              <tbody>
+                ${sec.rows.map(r => `<tr>
+                  <td style="${TDL}">${escHtml(r.name)}</td>
+                  <td style="${TD}">${r.cap || '-'}</td>
+                  <td style="${TD}">${r.denom || '-'}</td>
+                  <td style="${TD}">${r.nobe}</td>
+                  <td style="${TD};font-weight:700">${fmtRate(r.rate)}</td>
+                </tr>`).join('')}
+                <tr style="background:#f8f9fa;font-weight:700">
+                  <td style="${TDL}">小計</td>
+                  <td style="${TD}">${sec.rows.reduce((s, r) => s + r.cap, 0)}</td>
+                  <td style="${TD}">${sDenom}</td>
+                  <td style="${TD}">${sNobe}</td>
+                  <td style="${TD}">${fmtRate(sRate)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>`;
+
+      for (const r of sec.rows) {
+        tsvLines.push([sec.title, r.name, r.cap, r.denom, r.nobe, r.rate == null ? '' : r.rate.toFixed(1) + '%'].join('\t'));
+      }
+      tsvLines.push([sec.title, '小計', sec.rows.reduce((s, r) => s + r.cap, 0), sDenom, sNobe, sRate == null ? '' : sRate.toFixed(1) + '%'].join('\t'));
+    }
+
+    if (juris === '全て' && gDenom > 0) {
+      const gRate = gNobe / gDenom * 100;
+      html += `
+        <div class="card" style="margin-top:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:700;font-size:14px">全体稼働率</span>
+            <span style="font-weight:700;font-size:20px;color:var(--primary)">${gRate.toFixed(1)}%</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-muted);margin-top:4px">利用者延べ数 ${gNobe} ÷ 延開所日数 ${gDenom}</div>
+        </div>`;
+      tsvLines.push(['全体', '合計', '', gDenom, gNobe, gRate.toFixed(1) + '%'].join('\t'));
+    }
+
+    if (!html) {
+      el.innerHTML = '<div class="card" style="color:var(--text-muted);font-size:13px;padding:16px;text-align:center">対象の住居がありません。設定画面で住居と定員を登録してください。</div>';
+      _kadouTsv = '';
+      return;
+    }
+
+    _kadouTsv = tsvLines.join('\n');
+    el.innerHTML = `
+      <div style="display:flex;justify-content:flex-end;margin-top:12px">
+        <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px" onclick="copyKadouTsv()">コピー（TSV）</button>
+      </div>` + html;
+  } catch (e) {
+    console.error(e);
+    el.innerHTML = `<div class="card" style="color:#c62828;font-size:13px;padding:16px">読み込みエラー: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function copyKadouTsv() {
+  if (!_kadouTsv) { showToast('先に表示ボタンを押してください', 'error'); return; }
+  navigator.clipboard.writeText(_kadouTsv).then(() => {
+    showToast('稼働率レポートをコピーしました（Excelに貼り付け可）', 'success');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = _kadouTsv;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('稼働率レポートをコピーしました（Excelに貼り付け可）', 'success');
+  });
 }
 
 // ==============================

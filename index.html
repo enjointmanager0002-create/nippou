@@ -1527,7 +1527,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.06-1';
+const APP_VERSION = 'v2026.07.06-2';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -7007,6 +7007,42 @@ function commuteAssignTraining(key, place) {
   _setCommute(d);
 }
 
+// 対面研修の手動追加（シフトに「対面研修」を設定できない職員向け・事前登録式）
+function commuteAddManualTraining() {
+  const name  = document.getElementById('commute-mt-staff')?.value || '';
+  const date  = document.getElementById('commute-mt-date')?.value || '';
+  const place = document.getElementById('commute-mt-place')?.value || '';
+  if (!name || !date || !place) {
+    showToast('職員・日付・研修場所をすべて選択してください', 'error');
+    return;
+  }
+  const ym = date.slice(0, 7);
+  const d = _getCommute();
+  const key = `${date}|${_commuteNorm(name)}`;
+  if ((d.trainingDays[ym] || []).some(t => `${t.date}|${_commuteNorm(t.name)}` === key)) {
+    showToast(`${name}さんの${date}の研修はすでに登録されています`, 'error');
+    return;
+  }
+  (d.trainingDays[ym] = d.trainingDays[ym] || []).push({ date, name, manual: true });
+  d.trainingAssign[key] = place;
+  _setCommute(d);
+  const curYm = document.getElementById('inv-sr-month')?.value;
+  showToast(`${name}さんの対面研修（${date}・${place}）を登録しました` +
+    (curYm && curYm !== ym ? `※対象月（${curYm.replace('-', '年')}月）とは別の月の登録です` : ''), 'success');
+  _renderCommuteArea();
+}
+
+function commuteDeleteTraining(date, normName) {
+  if (!confirm(`${date} の研修登録を削除しますか？`)) return;
+  const ym = date.slice(0, 7);
+  const d = _getCommute();
+  d.trainingDays[ym] = (d.trainingDays[ym] || []).filter(t =>
+    !(t.date === date && _commuteNorm(t.name) === normName && t.manual));
+  delete d.trainingAssign[`${date}|${normName}`];
+  _setCommute(d);
+  _renderCommuteArea();
+}
+
 // --- 距離の手動登録 ---
 function commuteSaveDistance(inputEl) {
   const key = inputEl.dataset.key;
@@ -7212,23 +7248,37 @@ function _renderCommuteArea() {
       </span>
     </div>
 
-    ${training.length ? `
     <div style="margin-bottom:10px">
-      <div style="font-size:12px;font-weight:700;margin-bottom:4px">対面研修の検知（${training.length}件）— 研修場所を割り当ててください</div>
-      ${training.map(t => {
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px">対面研修（${ym ? ym.replace('-', '年') + '月' : ''}・${training.length}件）</div>
+      ${training.length ? training.map(t => {
         const key = `${t.date}|${_commuteNorm(t.name)}`;
         const cur = d.trainingAssign[key] || '';
         return `
-        <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px;flex-wrap:wrap">
           <span style="white-space:nowrap">${escHtml(t.date)}</span>
           <span style="font-weight:600;min-width:90px">${escHtml(t.name)}</span>
+          <span style="font-size:10px;padding:1px 6px;border-radius:8px;background:${t.manual ? '#e8f0fe' : '#f5f5f5'};color:${t.manual ? 'var(--primary)' : '#888'}">${t.manual ? '手動' : '勤怠CSV'}</span>
           <select class="form-select" style="margin:0;width:auto;font-size:12px;padding:4px 8px" onchange="commuteAssignTraining('${escHtml(key)}', this.value)">
             <option value="">場所を選択</option>
             ${tpNames.map(n => `<option value="${escHtml(n)}" ${cur === n ? 'selected' : ''}>${escHtml(n)}</option>`).join('')}
           </select>
+          ${t.manual ? `<button class="btn btn-secondary" style="width:auto;padding:2px 8px;font-size:11px;color:#c62828;border-color:#c62828" onclick="commuteDeleteTraining('${escHtml(t.date)}', '${escHtml(_commuteNorm(t.name))}')">削除</button>` : ''}
         </div>`;
-      }).join('')}
-    </div>` : ''}
+      }).join('') : '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">この月の研修はまだ登録されていません</div>'}
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;align-items:center">
+        <select id="commute-mt-staff" class="form-select" style="margin:0;width:auto;font-size:12px;padding:4px 8px">
+          <option value="">職員を選択</option>
+          ${Object.values(d.staffAddr).sort((a, b) => (a.code ?? 999999) - (b.code ?? 999999)).map(s => `<option value="${escHtml(s.disp)}">${escHtml(s.disp)}</option>`).join('')}
+        </select>
+        <input type="date" id="commute-mt-date" class="form-input" style="margin:0;width:150px;font-size:12px" value="${ym ? ym + '-01' : ''}">
+        <select id="commute-mt-place" class="form-select" style="margin:0;width:auto;font-size:12px;padding:4px 8px">
+          <option value="">研修場所を選択</option>
+          ${tpNames.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('')}
+        </select>
+        <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px" onclick="commuteAddManualTraining()">＋ 研修を追加</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">シフトに「対面研修」を設定できない職員（正社員の残業扱い等）は、ここから手動で登録してください。事前登録・事後登録どちらでも構いません。</div>
+    </div>
 
     <button class="btn btn-secondary" style="width:100%;font-size:13px" onclick="_renderCommutePreview()">交通費を計算（プレビュー）</button>
     <div id="commute-preview" style="margin-top:10px"></div>

@@ -1476,7 +1476,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.04-3';
+const APP_VERSION = 'v2026.07.04-4';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -6946,9 +6946,13 @@ async function submitKasanRecord() {
     await ensureKasanTable();
     const now = new Date().toLocaleString('ja-JP');
     const row = [now, date, home, resident, staff, type, naiyo, reason, renraku, gv('kasan-biko')];
-    await callGraph(
-      `${driveItem(state.excelFileId)}/workbook/tables('${KASAN_TABLE}')/rows/add`,
-      'POST', { values: [row] });
+    try {
+      await callGraph(
+        `${driveItem(state.excelFileId)}/workbook/tables('${KASAN_TABLE}')/rows/add`,
+        'POST', { values: [row] });
+    } catch (e) {
+      throw new Error(`[行追加] ${e.message}`);
+    }
     showToast(`${resident}さんの${type}を記録しました`, 'success');
     // 連続入力しやすいよう、加算種類・質問・備考のみクリア（日付・住居・スタッフは維持）
     document.getElementById('kasan-type').value = '';
@@ -6976,29 +6980,54 @@ async function _kasanSheetPath(createIfMissing) {
   return `${base}/worksheets/${encodeURIComponent(sheet.id)}`;
 }
 
-// 加算記録シート・テーブルがなければ作成（途中失敗からの再実行にも対応）
+// 加算記録シート・テーブルがなければ作成（途中失敗・過去の誤作成からの自動修復付き）
 async function ensureKasanTable() {
   if (state.kasanReady) return;
   const base = `${driveItem(state.excelFileId)}/workbook`;
-  const tables = await callGraph(`${base}/tables`);
-  if ((tables.value || []).some(t => t.name === KASAN_TABLE)) { state.kasanReady = true; return; }
+  // どのステップで失敗したか分かるようにラベル付きで実行
+  const step = async (label, fn) => {
+    try { return await fn(); }
+    catch (e) { throw new Error(`[${label}] ${e.message}`); }
+  };
 
-  const wsPath = await _kasanSheetPath(true);
+  const tables = await step('テーブル一覧取得', () => callGraph(`${base}/tables`));
+  const existing = (tables.value || []).find(t => t.name === KASAN_TABLE);
+  if (existing) {
+    // 「加算テーブル」が本当に加算記録シート上にあるか検証（過去の誤命名を修復）
+    const rng = await step('既存テーブル検証', () =>
+      callGraph(`${base}/tables/${existing.id}/range?$select=address`));
+    if (String(rng.address || '').includes(KASAN_SHEET)) {
+      state.kasanReady = true;
+      return;
+    }
+    // 別シートのテーブルに誤って名前が付いていた → 名前を戻して作り直す
+    const hasNippou = (tables.value || []).some(t => t.name === CONFIG.tableName);
+    const restoreName = hasNippou ? `旧テーブル${Math.floor(Math.random() * 100000)}` : CONFIG.tableName;
+    await step('誤命名テーブルの復元', () =>
+      callGraph(`${base}/tables/${existing.id}`, 'PATCH', { name: restoreName }));
+    console.warn(`加算テーブルの誤命名を検出し「${restoreName}」に戻しました（元の範囲: ${rng.address}）`);
+  }
+
+  const wsPath = await step('シート作成/取得', () => _kasanSheetPath(true));
 
   // シート上に既にテーブルがあれば（過去の作成が途中で止まった場合）それを利用して名前だけ設定
-  const st = await callGraph(`${wsPath}/tables`);
+  const st = await step('シート上のテーブル確認', () => callGraph(`${wsPath}/tables`));
   if ((st.value || []).length) {
-    await callGraph(`${base}/tables/${st.value[0].id}`, 'PATCH', { name: KASAN_TABLE });
+    await step('テーブル名設定', () =>
+      callGraph(`${base}/tables/${st.value[0].id}`, 'PATCH', { name: KASAN_TABLE }));
     state.kasanReady = true;
     return;
   }
 
   // ヘッダー行を書き込んでテーブル化。作成レスポンスのIDで名前を設定する
   const colEnd = String.fromCharCode(64 + KASAN_HEADERS.length);
-  await callGraph(`${wsPath}/range(address='A1:${colEnd}1')`, 'PATCH', { values: [KASAN_HEADERS] });
-  const newTable = await callGraph(`${wsPath}/tables/add`, 'POST', { address: `A1:${colEnd}1`, hasHeaders: true });
+  await step('ヘッダー書込', () =>
+    callGraph(`${wsPath}/range(address='A1:${colEnd}1')`, 'PATCH', { values: [KASAN_HEADERS] }));
+  const newTable = await step('テーブル作成', () =>
+    callGraph(`${wsPath}/tables/add`, 'POST', { address: `A1:${colEnd}1`, hasHeaders: true }));
   if (newTable?.id) {
-    await callGraph(`${base}/tables/${newTable.id}`, 'PATCH', { name: KASAN_TABLE });
+    await step('テーブル名設定', () =>
+      callGraph(`${base}/tables/${newTable.id}`, 'PATCH', { name: KASAN_TABLE }));
   }
   state.kasanReady = true;
 }

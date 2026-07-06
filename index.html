@@ -755,6 +755,7 @@
     <div class="app-header-title">電子日報 <span id="app-version" style="font-size:10px;font-weight:400;opacity:.65"></span></div>
     <div class="app-header-user">
       <span id="user-name">...</span>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -889,6 +890,7 @@
     </button>
     <span style="font-size:18px;font-weight:700;color:white">設定</span>
     <div style="margin-left:auto;display:flex;gap:6px">
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
     </div>
@@ -1028,6 +1030,7 @@
     <div class="app-header-title">閲覧・編集</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('main')">← 戻る</button>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -1076,6 +1079,7 @@
     <div class="app-header-title">利用状況レポート</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -1121,6 +1125,7 @@
     <div class="app-header-title">食材費・日用品費計算</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -1216,6 +1221,7 @@
     <div class="app-header-title">人員実績表</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -1258,12 +1264,91 @@
   </div>
 </div>
 
+<!-- KASAN SCREEN -->
+<div id="screen-kasan" class="hidden">
+  <div class="app-header">
+    <div class="app-header-title">加算記録</div>
+    <div class="app-header-user">
+      <button class="btn-logout" onclick="showScreen('main')">← 戻る</button>
+      <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
+      <button class="btn-logout" onclick="showSettings()">設定</button>
+      <button class="btn-logout" onclick="logout()">ログアウト</button>
+    </div>
+  </div>
+  <div class="app-content">
+    <div class="card">
+      <div class="card-title">加算記録の入力</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">日付<span class="required">*</span></label>
+          <input type="date" id="kasan-date" class="form-input" style="margin:0">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">対象住居<span class="required">*</span></label>
+          <select id="kasan-home" class="form-select" style="margin:0" onchange="_onKasanHomeChange()">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">スタッフ氏名<span class="required">*</span></label>
+          <select id="kasan-staff" class="form-select" style="margin:0">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">対象利用者<span class="required">*</span></label>
+          <select id="kasan-resident" class="form-select" style="margin:0">
+            <option value="">住居を選択してください</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" style="margin-top:10px">
+        <label class="form-label">加算の種類<span class="required">*</span></label>
+        <select id="kasan-type" class="form-select" style="margin:0" onchange="_renderKasanQuestions()">
+          <option value="">選択してください</option>
+        </select>
+      </div>
+      <div id="kasan-questions"></div>
+      <div class="form-group" style="margin-top:10px">
+        <label class="form-label">備考（具体的な状況など・任意）</label>
+        <textarea id="kasan-biko" class="form-input" rows="2" style="margin:0;resize:vertical"></textarea>
+      </div>
+      <button class="btn btn-primary" id="kasan-submit" style="width:100%;margin-top:12px" onclick="submitKasanRecord()">登録する</button>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">記録の一覧・集計</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">対象月</label>
+          <input type="month" id="kasan-list-month" class="form-input" style="margin:0">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">住居</label>
+          <select id="kasan-list-home" class="form-select" style="margin:0">
+            <option value="">全住居</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">加算の種類</label>
+          <select id="kasan-list-type" class="form-select" style="margin:0">
+            <option value="">全種類</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-secondary" style="width:100%" onclick="renderKasanList()">表示する</button>
+      <div id="kasan-list" style="margin-top:12px"></div>
+    </div>
+  </div>
+</div>
+
 <!-- INVOICE SCREEN -->
 <div id="screen-invoice" class="hidden">
   <div class="app-header">
     <div class="app-header-title">請求書・社労士管理</div>
     <div class="app-header-user">
       <button class="btn-logout" onclick="showScreen('settings')">← 戻る</button>
+      <button class="btn-logout" onclick="showKasanScreen()">加算記録</button>
       <button class="btn-logout" onclick="showViewer()">閲覧・編集</button>
       <button class="btn-logout" onclick="showSettings()">設定</button>
       <button class="btn-logout" onclick="logout()">ログアウト</button>
@@ -1391,7 +1476,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.04-1';
+const APP_VERSION = 'v2026.07.04-2';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -3283,7 +3368,7 @@ function clearForm() {
 // SCREEN MANAGEMENT
 // ==============================
 function showScreen(name) {
-  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice'].forEach(s => {
+  ['loading', 'login', 'main', 'success', 'settings', 'viewer', 'usage', 'budget', 'jinin', 'invoice', 'kasan'].forEach(s => {
     const el = document.getElementById(`screen-${s}`);
     if (el) el.classList.toggle('hidden', s !== name);
   });
@@ -6737,6 +6822,305 @@ async function generateSrExcel() {
 function _parseTeateAmount(typeStr) {
   const m = String(typeStr||'').match(/(\d{3,6})円/);
   return m ? parseInt(m[1]) : 5000;
+}
+
+// ==============================
+// 加算記録
+// ==============================
+const KASAN_SHEET = '加算記録';
+const KASAN_TABLE = '加算テーブル';
+const KASAN_HEADERS = ['送信日時','日付','ホーム名','利用者名','スタッフ名','加算種類','実施内容','休んだ理由','日中活動先への連絡','備考'];
+const KH_ = Object.fromEntries(KASAN_HEADERS.map((h, i) => [h, i]));
+
+// 加算種類 → 実施内容の定型文（日中支援加算のみ専用の質問UI）
+const KASAN_TYPES = {
+  '日中支援加算': null,
+  '自立生活支援加算': '一人暮らし等の実現に向けた支援・情報提供を行った',
+  '入院時支援加算': '入院先を訪問し、入院期間中の被服等の準備や相談支援などの日常生活上の支援を行った',
+  '帰宅時支援加算（長期帰宅時支援加算）': '家族等との連絡調整や交通手段の確保の支援を行った',
+};
+const KASAN_NITCHU_REASONS  = ['心身の体調不良', '買い物等の外出支援', '行政手続き等'];
+const KASAN_NITCHU_RENRAKU  = ['連絡した', '連絡していない'];
+const KASAN_NITCHU_SUPPORTS = ['通院援助を行った', '買い物支援等の移動支援を行なった', '生活に関する相談に乗った', '入浴支援や排泄支援などの介護支援を行なった'];
+
+function showKasanScreen() {
+  const { homes, staffNames } = getSettings();
+  const homeOpts = (homes || []).filter(h => h.name)
+    .map(h => `<option value="${escHtml(h.name)}">${escHtml(h.name)}</option>`).join('');
+  document.getElementById('kasan-home').innerHTML = '<option value="">選択してください</option>' + homeOpts;
+  document.getElementById('kasan-list-home').innerHTML = '<option value="">全住居</option>' + homeOpts;
+
+  document.getElementById('kasan-staff').innerHTML = '<option value="">選択してください</option>' +
+    (staffNames || []).map(s => `<option value="${escHtml(s.name)}">${escHtml(s.name)}</option>`).join('');
+
+  const typeOpts = Object.keys(KASAN_TYPES)
+    .map(t => `<option value="${escHtml(t)}">${escHtml(t)}</option>`).join('');
+  document.getElementById('kasan-type').innerHTML = '<option value="">選択してください</option>' + typeOpts;
+  document.getElementById('kasan-list-type').innerHTML = '<option value="">全種類</option>' + typeOpts;
+
+  const now = new Date();
+  const fmt2 = n => String(n).padStart(2, '0');
+  document.getElementById('kasan-date').value = `${now.getFullYear()}-${fmt2(now.getMonth()+1)}-${fmt2(now.getDate())}`;
+  document.getElementById('kasan-list-month').value = `${now.getFullYear()}-${fmt2(now.getMonth()+1)}`;
+  document.getElementById('kasan-questions').innerHTML = '';
+  document.getElementById('kasan-biko').value = '';
+  document.getElementById('kasan-list').innerHTML = '';
+  showScreen('kasan');
+}
+
+function _onKasanHomeChange() {
+  const home = document.getElementById('kasan-home').value;
+  const { homes } = getSettings();
+  const h = (homes || []).find(hh => hh.name === home);
+  const residents = (h?.residents || []).map(r => r.name || r).filter(Boolean);
+  document.getElementById('kasan-resident').innerHTML =
+    '<option value="">選択してください</option>' +
+    residents.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('');
+}
+
+function _renderKasanQuestions() {
+  const type = document.getElementById('kasan-type').value;
+  const el = document.getElementById('kasan-questions');
+  if (!type) { el.innerHTML = ''; return; }
+
+  if (type !== '日中支援加算') {
+    // 定型の実施内容を表示（そのまま記録される）
+    el.innerHTML = `
+      <div style="margin-top:10px;padding:10px 12px;background:#e8f0fe;border-radius:8px">
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:2px">実施内容（以下の内容で記録されます）</div>
+        <div style="font-size:13px;font-weight:600">${escHtml(KASAN_TYPES[type])}</div>
+      </div>`;
+    return;
+  }
+
+  // 日中支援加算の質問UI
+  el.innerHTML = `
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">利用者が日中活動をお休みした理由<span class="required">*</span></label>
+      <select id="kasan-q-reason" class="form-select" style="margin:0">
+        <option value="">選択してください</option>
+        ${KASAN_NITCHU_REASONS.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">日中活動先に休みの連絡をしたか<span class="required">*</span></label>
+      <select id="kasan-q-renraku" class="form-select" style="margin:0">
+        <option value="">選択してください</option>
+        ${KASAN_NITCHU_RENRAKU.map(r => `<option value="${escHtml(r)}">${escHtml(r)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group" style="margin-top:10px">
+      <label class="form-label">実施した支援（複数選択可）<span class="required">*</span></label>
+      ${KASAN_NITCHU_SUPPORTS.map(s => `
+        <label style="display:flex;align-items:center;gap:8px;padding:7px 4px;font-size:13px;cursor:pointer;border-bottom:1px solid #f5f5f5">
+          <input type="checkbox" class="kasan-q-support" value="${escHtml(s)}">${escHtml(s)}
+        </label>`).join('')}
+    </div>`;
+}
+
+async function submitKasanRecord() {
+  const gv = id => document.getElementById(id)?.value || '';
+  const date = gv('kasan-date'), home = gv('kasan-home'),
+        staff = gv('kasan-staff'), resident = gv('kasan-resident'),
+        type = gv('kasan-type');
+  if (!date || !home || !staff || !resident || !type) {
+    showToast('日付・住居・スタッフ・利用者・加算の種類をすべて入力してください', 'error');
+    return;
+  }
+
+  let naiyo = '', reason = '', renraku = '';
+  if (type === '日中支援加算') {
+    reason  = gv('kasan-q-reason');
+    renraku = gv('kasan-q-renraku');
+    const supports = Array.from(document.querySelectorAll('.kasan-q-support:checked')).map(c => c.value);
+    if (!reason || !renraku) { showToast('お休みした理由と連絡の有無を選択してください', 'error'); return; }
+    if (!supports.length)    { showToast('実施した支援を1つ以上選択してください', 'error'); return; }
+    naiyo = supports.join('、');
+  } else {
+    naiyo = KASAN_TYPES[type];
+  }
+
+  const btn = document.getElementById('kasan-submit');
+  btn.disabled = true; btn.textContent = '保存中...';
+  try {
+    await ensureKasanTable();
+    const now = new Date().toLocaleString('ja-JP');
+    const row = [now, date, home, resident, staff, type, naiyo, reason, renraku, gv('kasan-biko')];
+    await callGraph(
+      `${driveItem(state.excelFileId)}/workbook/tables('${KASAN_TABLE}')/rows/add`,
+      'POST', { values: [row] });
+    showToast(`${resident}さんの${type}を記録しました`, 'success');
+    // 連続入力しやすいよう、加算種類・質問・備考のみクリア（日付・住居・スタッフは維持）
+    document.getElementById('kasan-type').value = '';
+    document.getElementById('kasan-questions').innerHTML = '';
+    document.getElementById('kasan-biko').value = '';
+    // 一覧が表示中なら更新
+    if (document.getElementById('kasan-list').innerHTML.trim()) renderKasanList();
+  } catch (e) {
+    console.error(e);
+    showToast('保存エラー: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = '登録する';
+  }
+}
+
+// 加算記録シート・テーブルがなければ作成
+async function ensureKasanTable() {
+  if (state.kasanReady) return;
+  const tables = await callGraph(`${driveItem(state.excelFileId)}/workbook/tables`);
+  if ((tables.value || []).some(t => t.name === KASAN_TABLE)) { state.kasanReady = true; return; }
+
+  try {
+    await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets/add`, 'POST', { name: KASAN_SHEET });
+  } catch (e) {
+    // 既にシートがある場合のエラーは無視
+    if (!String(e.message).includes('ItemAlreadyExists') && !String(e.message).includes('既に')) console.warn(e.message);
+  }
+  const colEnd = String.fromCharCode(64 + KASAN_HEADERS.length);
+  await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(KASAN_SHEET)}/range(address='A1:${colEnd}1')`,
+    'PATCH', { values: [KASAN_HEADERS] });
+  await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(KASAN_SHEET)}/tables/add`,
+    'POST', { address: `A1:${colEnd}1`, hasHeaders: true });
+  // 追加されたテーブル（既存の日報テーブル以外）に名前を付ける
+  const t2 = await callGraph(`${driveItem(state.excelFileId)}/workbook/tables`);
+  const newT = (t2.value || []).find(t => t.name !== CONFIG.tableName && t.name !== KASAN_TABLE);
+  if (newT) {
+    await callGraph(`${driveItem(state.excelFileId)}/workbook/tables/${newT.id}`, 'PATCH', { name: KASAN_TABLE });
+  }
+  state.kasanReady = true;
+}
+
+async function readKasanRows() {
+  await ensureKasanTable();
+  const range = await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(KASAN_SHEET)}/usedRange`);
+  const startRow = (range.rowIndex || 0) + 1;
+  const rows = [];
+  const vals = range.values || [];
+  for (let i = 1; i < vals.length; i++) {
+    if (!vals[i][1]) continue;
+    rows.push({ excelRow: startRow + i, values: vals[i] });
+  }
+  return rows;
+}
+
+let _kasanTsv = '';
+async function renderKasanList() {
+  const el = document.getElementById('kasan-list');
+  const ym = document.getElementById('kasan-list-month').value;
+  if (!ym) { showToast('対象月を選択してください', 'error'); return; }
+  const homeF = document.getElementById('kasan-list-home').value;
+  const typeF = document.getElementById('kasan-list-type').value;
+  el.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px">読み込み中...</div>';
+  try {
+    const all = await readKasanRows();
+    const rows = all.filter(r => {
+      const d = _toDateStr(r.values[KH_['日付']]);
+      if (!d.startsWith(ym)) return false;
+      if (homeF && String(r.values[KH_['ホーム名']]) !== homeF) return false;
+      if (typeF && String(r.values[KH_['加算種類']]) !== typeF) return false;
+      return true;
+    }).sort((a, b) => _toDateStr(a.values[KH_['日付']]).localeCompare(_toDateStr(b.values[KH_['日付']])));
+
+    if (!rows.length) {
+      el.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px;text-align:center">該当する記録がありません</div>';
+      _kasanTsv = '';
+      return;
+    }
+
+    // 利用者×加算種類の回数集計
+    const agg = {};
+    for (const r of rows) {
+      const key = `${r.values[KH_['利用者名']]}_${r.values[KH_['加算種類']]}`;
+      agg[key] = (agg[key] || 0) + 1;
+    }
+    const aggRows = Object.entries(agg).sort()
+      .map(([k, c]) => { const [n, t] = k.split('_'); return `<tr><td style="padding:3px 8px;border:1px solid #e0e0e0">${escHtml(n)}</td><td style="padding:3px 8px;border:1px solid #e0e0e0">${escHtml(t)}</td><td style="padding:3px 8px;border:1px solid #e0e0e0;text-align:right;font-weight:700">${c}回</td></tr>`; })
+      .join('');
+
+    const TD = 'padding:4px 6px;border:1px solid #e0e0e0;font-size:11px;vertical-align:top';
+    const listRows = rows.map(r => {
+      const v = r.values;
+      const detail = [v[KH_['実施内容']], v[KH_['休んだ理由']] ? `理由:${v[KH_['休んだ理由']]}` : '', v[KH_['日中活動先への連絡']] ? `連絡:${v[KH_['日中活動先への連絡']]}` : '']
+        .filter(Boolean).join(' / ');
+      return `<tr>
+        <td style="${TD};white-space:nowrap">${escHtml(_toDateStr(v[KH_['日付']]))}</td>
+        <td style="${TD};white-space:nowrap">${escHtml(String(v[KH_['ホーム名']]||''))}</td>
+        <td style="${TD};white-space:nowrap">${escHtml(String(v[KH_['利用者名']]||''))}</td>
+        <td style="${TD};white-space:nowrap">${escHtml(String(v[KH_['スタッフ名']]||''))}</td>
+        <td style="${TD};white-space:nowrap">${escHtml(String(v[KH_['加算種類']]||''))}</td>
+        <td style="${TD}">${escHtml(detail)}${v[KH_['備考']] ? `<div style="color:#888">備考: ${escHtml(String(v[KH_['備考']]))}</div>` : ''}</td>
+        <td style="${TD}"><button class="btn btn-secondary" style="width:auto;padding:3px 8px;font-size:11px;color:#c62828;border-color:#c62828" onclick="deleteKasanRecord(${r.excelRow})">削除</button></td>
+      </tr>`;
+    }).join('');
+
+    // TSV（Excel貼り付け・請求照合用）
+    _kasanTsv = [['日付','住居','利用者','スタッフ','加算種類','実施内容','休んだ理由','連絡','備考'].join('\t')]
+      .concat(rows.map(r => {
+        const v = r.values;
+        return [_toDateStr(v[KH_['日付']]), v[KH_['ホーム名']], v[KH_['利用者名']], v[KH_['スタッフ名']], v[KH_['加算種類']], v[KH_['実施内容']], v[KH_['休んだ理由']], v[KH_['日中活動先への連絡']], v[KH_['備考']]]
+          .map(x => String(x ?? '').replace(/[\t\n]/g, ' ')).join('\t');
+      })).join('\n');
+
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:700">${rows.length}件</div>
+        <button class="btn btn-secondary" style="width:auto;padding:5px 14px;font-size:12px" onclick="copyKasanTsv()">コピー（TSV）</button>
+      </div>
+      <div style="overflow-x:auto;border:1px solid #ddd;border-radius:8px;margin-bottom:14px">
+        <table style="border-collapse:collapse;min-width:100%">
+          <thead><tr>${['日付','住居','利用者','スタッフ','加算種類','実施内容','操作'].map(h => `<th style="padding:4px 6px;border:1px solid #ccc;background:#f5f5f5;font-size:11px;white-space:nowrap">${h}</th>`).join('')}</tr></thead>
+          <tbody>${listRows}</tbody>
+        </table>
+      </div>
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;color:var(--primary)">利用者別の算定回数</div>
+      <table style="border-collapse:collapse;font-size:12px">
+        <thead><tr><th style="padding:3px 8px;border:1px solid #ccc;background:#f5f5f5">利用者</th><th style="padding:3px 8px;border:1px solid #ccc;background:#f5f5f5">加算種類</th><th style="padding:3px 8px;border:1px solid #ccc;background:#f5f5f5">回数</th></tr></thead>
+        <tbody>${aggRows}</tbody>
+      </table>`;
+  } catch (e) {
+    console.error(e);
+    el.innerHTML = `<div style="color:#c62828;padding:12px;font-size:13px">読み込みエラー: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function copyKasanTsv() {
+  if (!_kasanTsv) { showToast('先に表示ボタンを押してください', 'error'); return; }
+  navigator.clipboard.writeText(_kasanTsv).then(() => {
+    showToast('加算記録をコピーしました（Excelに貼り付け可）', 'success');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = _kasanTsv;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    showToast('加算記録をコピーしました（Excelに貼り付け可）', 'success');
+  });
+}
+
+async function deleteKasanRecord(excelRow) {
+  if (!confirm('この加算記録を削除しますか？\nこの操作は取り消せません。')) return;
+  try {
+    showToast('削除中...', 'info');
+    const rangeInfo = await callGraph(
+      `${driveItem(state.excelFileId)}/workbook/tables('${KASAN_TABLE}')/range?$select=address`);
+    const m = String(rangeInfo.address || '').match(/![A-Z]+(\d+):/);
+    const headerRow = m ? parseInt(m[1]) : 1;
+    const idx = excelRow - headerRow - 1;
+    if (idx < 0) throw new Error('削除対象の行番号が不正です');
+    await callGraph(
+      `${driveItem(state.excelFileId)}/workbook/tables('${KASAN_TABLE}')/rows/itemAt(index=${idx})`,
+      'DELETE');
+    showToast('削除しました', 'success');
+    renderKasanList();
+  } catch (e) {
+    console.error(e);
+    showToast('削除エラー: ' + e.message, 'error');
+  }
 }
 
 // ==============================

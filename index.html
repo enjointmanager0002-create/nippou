@@ -1527,7 +1527,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.06-3';
+const APP_VERSION = 'v2026.07.08-2';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -6774,6 +6774,7 @@ function _getCommute() {
   d.trainingAssign = d.trainingAssign || {};  // "date|正規化氏名" → 研修場所名
   d.trainingWork   = d.trainingWork   || {};  // "date|正規化氏名" → 同日勤務の勤務地名（研修→勤務地に直行する日）
   d.attendDays     = d.attendDays     || {};  // ym → [{name, loc, days}]
+  d.staffBase      = d.staffBase      || {};  // 正規化氏名 → 基本勤務地（勤務パターンに住居名がない職員用）
   d.geoCache       = d.geoCache       || {};  // 住所 → [lat,lon] | null
   return d;
 }
@@ -6898,12 +6899,10 @@ async function handleCommuteDistUpload(input) {
   input.value = '';
 }
 
-// --- MF勤怠「勤怠項目別集計」CSV → 住居別出勤日数 ---
+// --- MF勤怠CSV → 住居別出勤日数（日次勤怠レポート／勤怠項目別集計の両形式に対応） ---
 async function handleCommuteAttendUpload(input) {
   const file = input.files[0];
   if (!file) return;
-  const ym = document.getElementById('inv-sr-month')?.value;
-  if (!ym) { showToast('先に対象月を選択してください', 'error'); input.value = ''; return; }
   try {
     const buffer = await file.arrayBuffer();
     let text;
@@ -6915,32 +6914,93 @@ async function handleCommuteAttendUpload(input) {
     if (rows.length < 2) throw new Error('データ行がありません');
     const header = rows[0].map(h => String(h || ''));
 
-    // 「出勤日数（…）（…place◯◯）」列を住居ごとにグループ化
+    // ── 形式1: 勤怠項目別集計（住居別の出勤日数列がある月次CSV）──
     const locCols = {};
     header.forEach((h, i) => {
       if (!h.includes('出勤日数') || !/place/i.test(h)) return;
       const m = h.match(/[Pp]lace(.+?)[）\)]\s*$/);
       if (m) (locCols[m[1].trim()] = locCols[m[1].trim()] || []).push(i);
     });
-    if (!Object.keys(locCols).length) throw new Error('One\'s place の出勤日数列が見つかりません。「勤怠項目別集計」のCSVか確認してください');
 
-    const records = [];
-    for (let ri = 1; ri < rows.length; ri++) {
-      const name = String(rows[ri][1] || '').trim();
-      if (!name) continue;
-      for (const [loc, cols] of Object.entries(locCols)) {
-        let days = 0;
-        for (const c of cols) {
-          const v = Number(String(rows[ri][c] || '0').trim());
-          if (!isNaN(v)) days += v;
+    if (Object.keys(locCols).length) {
+      const ym = document.getElementById('inv-sr-month')?.value;
+      if (!ym) { showToast('先に対象月を選択してください', 'error'); input.value = ''; return; }
+      const records = [];
+      for (let ri = 1; ri < rows.length; ri++) {
+        const name = String(rows[ri][1] || '').trim();
+        if (!name) continue;
+        for (const [loc, cols] of Object.entries(locCols)) {
+          let days = 0;
+          for (const c of cols) {
+            const v = Number(String(rows[ri][c] || '0').trim());
+            if (!isNaN(v)) days += v;
+          }
+          if (days > 0) records.push({ name, loc, days });
         }
-        if (days > 0) records.push({ name, loc, days });
       }
+      const d = _getCommute();
+      d.attendDays[ym] = records;
+      _setCommute(d);
+      showToast(`${ym.replace('-', '年')}月の出勤日数を登録しました（${records.length}件・${new Set(records.map(r => r.name)).size}名）`, 'success');
+      _renderCommuteArea();
+      input.value = '';
+      return;
     }
+
+    // ── 形式2: 日次勤怠レポート（氏名・日付・出勤・勤務パターン列）──
+    const iName = header.indexOf('氏名');
+    const iDate = header.indexOf('日付');
+    const iIn   = header.indexOf('出勤');
+    const iPat  = header.indexOf('勤務パターン');
+    if (iName < 0 || iDate < 0 || iIn < 0 || iPat < 0) {
+      throw new Error('CSVの形式を認識できません。MF勤怠の「日次勤怠レポート」または「勤怠項目別集計」をアップロードしてください');
+    }
+
+    // 出勤打刻のある行を 職員×日付×住居 でユニークカウント
+    // （勤務パターンの先頭トークン＝住居名。対面研修は別計算のため除外）
+    const seen = new Set();
+    const cnt = {};  // ym → `${name}|${loc}` → 日数
+    for (let ri = 1; ri < rows.length; ri++) {
+      const r = rows[ri];
+      const name = String(r[iName] || '').trim();
+      const dateRaw = String(r[iDate] || '').trim();
+      const inTime = String(r[iIn] || '').trim();
+      const pat = String(r[iPat] || '').trim();
+      if (!name || !dateRaw || !inTime || !pat) continue;   // 出勤打刻のない行（休暇等）は対象外
+      if (pat.includes('対面研修')) continue;                // 研修は対面研修の仕組みで別計算
+      const loc = pat.split(/[\s　]+/)[0];
+      if (!loc) continue;
+      const dp = dateRaw.split('/');
+      if (dp.length !== 3) continue;
+      const date = `${dp[0]}-${dp[1].padStart(2, '0')}-${dp[2].padStart(2, '0')}`;
+      const ym = date.slice(0, 7);
+      const uk = `${ym}|${_commuteNorm(name)}|${date}|${loc}`;
+      if (seen.has(uk)) continue;
+      seen.add(uk);
+      const key = `${name}|${loc}`;
+      (cnt[ym] = cnt[ym] || {})[key] = (cnt[ym][key] || 0) + 1;
+    }
+
+    const months = Object.keys(cnt);
+    if (!months.length) throw new Error('出勤実績が見つかりませんでした');
+
     const d = _getCommute();
-    d.attendDays[ym] = records;
+    for (const ym of months) {
+      d.attendDays[ym] = Object.entries(cnt[ym]).map(([k, days]) => {
+        const [name, loc] = k.split('|');
+        return { name, loc, days };
+      });
+    }
     _setCommute(d);
-    showToast(`${ym.replace('-', '年')}月の出勤日数を登録しました（${records.length}件・${new Set(records.map(r => r.name)).size}名）`, 'success');
+    // 同じCSVから対面研修も検知（シフトに「対面研修」がある職員の分）
+    _detectTrainingDays(text);
+    const summary = months.map(ym =>
+      `${ym.replace('-', '年')}月 ${d.attendDays[ym].length}件・${new Set(d.attendDays[ym].map(r => r.name)).size}名`).join(' / ');
+    showToast(`日次勤怠レポートから出勤日数を集計しました（${summary}）`, 'success');
+    const selYm = document.getElementById('inv-sr-month')?.value;
+    if (selYm && !months.includes(selYm)) {
+      setTimeout(() => showToast(`※CSVの月（${months.join('・')}）と対象月（${selYm}）が異なります。対象月を確認してください`, 'error'), 600);
+    }
     _renderCommuteArea();
   } catch (e) {
     showToast(`読み込みエラー: ${e.message}`, 'error');
@@ -7055,6 +7115,16 @@ function commuteDeleteTraining(date, normName) {
   _renderCommuteArea();
 }
 
+// --- 基本勤務地の設定（勤務パターンに住居名がない職員用）---
+function commuteSetStaffBase(norm, loc) {
+  const d = _getCommute();
+  if (loc) d.staffBase[norm] = loc;
+  else delete d.staffBase[norm];
+  _setCommute(d);
+  showToast(loc ? `基本勤務地を「${loc}」に設定しました` : '基本勤務地を解除しました', 'success');
+  _renderCommutePreview();
+}
+
 // --- 距離の手動登録 ---
 function commuteSaveDistance(inputEl) {
   const key = inputEl.dataset.key;
@@ -7090,7 +7160,8 @@ function _calcCommute(ym) {
     }
   };
 
-  // 通常の通勤（勤怠項目別集計CSVより）
+  // 通常の通勤（勤怠CSVより）
+  const needBase = []; // 勤務パターンに住居名がなく、基本勤務地も未設定の職員
   for (const rec of (d.attendDays[ym] || [])) {
     const norm = _commuteNorm(rec.name);
     // 住居名マッチ（完全一致 → 部分一致）
@@ -7103,9 +7174,18 @@ function _calcCommute(ym) {
         if (recN.includes(kn) || kn.includes(recN)) { locKey = k; break; }
       }
     }
-    const place = locKey || rec.loc;
-    const dist = d.distances[`${norm}|${place}`];
-    if (dist == null) { addMissing(rec.name, norm, place); continue; }
+    // 住居名が取れないパターン（ﾌﾚｯｸｽ・通常勤務・看護師勤務等）→ 基本勤務地で代替
+    if (!locKey) {
+      const base = d.staffBase[norm];
+      if (base) {
+        locKey = base;
+      } else {
+        needBase.push({ disp: rec.name, norm, pat: rec.loc, days: rec.days });
+        continue;
+      }
+    }
+    const dist = d.distances[`${norm}|${locKey}`];
+    if (dist == null) { addMissing(rec.name, norm, locKey); continue; }
     addKm(norm, rec.name, rec.days * dist * 2);
   }
 
@@ -7154,7 +7234,14 @@ function _calcCommute(ym) {
     perStaff[norm].km = km;
     perStaff[norm].fee = Math.round(km * COMMUTE_RATE);
   }
-  return { perStaff, missing: Object.values(missingMap), unassigned };
+  // 基本勤務地未設定は職員単位にまとめる
+  const needBaseMap = {};
+  for (const nb of needBase) {
+    if (!needBaseMap[nb.norm]) needBaseMap[nb.norm] = { disp: nb.disp, norm: nb.norm, pats: [], days: 0 };
+    needBaseMap[nb.norm].pats.push(`${nb.pat}(${nb.days}日)`);
+    needBaseMap[nb.norm].days += nb.days;
+  }
+  return { perStaff, missing: Object.values(missingMap), unassigned, needBase: Object.values(needBaseMap) };
 }
 
 // --- 距離の自動計算（Nominatim + OSRM。Pythonツールと同一ロジック）---
@@ -7282,12 +7369,13 @@ function _renderCommuteArea() {
 
     <div style="margin-bottom:10px">
       <label class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px;display:inline-block;cursor:pointer">
-        ${ym ? ym.replace('-', '年') + '月' : '対象月'}の勤怠項目別集計CSVをアップロード
+        ${ym ? ym.replace('-', '年') + '月' : '対象月'}の勤怠CSVをアップロード
         <input type="file" accept=".csv" style="display:none" onchange="handleCommuteAttendUpload(this)">
       </label>
       <span style="font-size:12px;margin-left:8px;color:${attend.length ? 'var(--success, #2e7d32)' : 'var(--text-muted)'}">
         ${attend.length ? `登録済み（${attend.length}件・${new Set(attend.map(r => r.name)).size}名）` : '未登録'}
       </span>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:4px">日次勤怠レポート（daily_attendance_report）をそのままアップロードできます。出勤打刻のある日を職員×住居ごとに数え、対面研修シフトも同時に検知します（勤怠項目別集計CSVにも対応）。</div>
     </div>
 
     <div style="margin-bottom:10px">
@@ -7351,10 +7439,26 @@ function _renderCommutePreview() {
     el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;text-align:center">対象月の勤怠項目別集計CSVをアップロードしてください</div>';
     return;
   }
-  const { perStaff, missing, unassigned } = _calcCommute(ym);
+  const { perStaff, missing, unassigned, needBase } = _calcCommute(ym);
 
   const TD = 'padding:4px 8px;border:1px solid #e0e0e0;font-size:12px';
   let html = '';
+
+  if (needBase.length) {
+    const locNames = Object.keys(d.locations);
+    html += `
+      <div style="font-size:12px;font-weight:700;color:#e65100;margin-bottom:4px">基本勤務地が未設定（${needBase.length}名）— 勤務パターンに住居名がないため、主な勤務地を選択してください（一度設定すれば以降は自動）</div>
+      ${needBase.map(nb => `
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px;flex-wrap:wrap">
+          <span style="font-weight:600;min-width:90px">${escHtml(nb.disp)}</span>
+          <span style="color:var(--text-muted)">${escHtml(nb.pats.join('、'))}</span>
+          <select class="form-select" style="margin:0;width:auto;font-size:12px;padding:4px 8px" onchange="commuteSetStaffBase('${escHtml(nb.norm)}', this.value)">
+            <option value="">勤務地を選択</option>
+            ${locNames.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      <div style="height:8px"></div>`;
+  }
 
   if (unassigned.length) {
     html += `<div style="font-size:12px;color:#e65100;background:#fff8e1;border-radius:8px;padding:8px 10px;margin-bottom:8px">
@@ -7563,8 +7667,8 @@ async function generateSrExcel() {
 
     // 交通費（勤怠項目別集計CSV＋対面研修から計算。未登録分は0のまま出力される）
     const commute = _calcCommute(ymStr);
-    if (commute.missing.length || commute.unassigned.length) {
-      showToast(`交通費に未計算分があります（距離未登録${commute.missing.length}件・研修場所未割当${commute.unassigned.length}件）。交通費計算カードで確認してください`, 'error');
+    if (commute.missing.length || commute.unassigned.length || commute.needBase.length) {
+      showToast(`交通費に未計算分があります（距離未登録${commute.missing.length}件・研修場所未割当${commute.unassigned.length}件・基本勤務地未設定${commute.needBase.length}名）。交通費計算カードで確認してください`, 'error');
     }
 
     const headerRow = ['個人コード', '氏　　名', '特別手当', '食事代', '立替精算分', '交通費'];

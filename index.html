@@ -1470,6 +1470,16 @@
       </div>
 
       <div class="card" style="margin-top:12px">
+        <div class="card-title">職員食事回数一覧</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">対象月の日報から職員の食事回数（朝食=早朝の「有」120円 / 夕食=日中の「有」200円）を集計します。</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-secondary" style="width:auto;padding:6px 16px;font-size:12px" onclick="renderStaffMealList()">一覧を表示</button>
+          <button class="btn btn-secondary" style="width:auto;padding:6px 16px;font-size:12px" onclick="printStaffMealList()">印刷する</button>
+        </div>
+        <div id="staff-meal-list" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" style="margin-top:12px">
         <div class="card-title">交通費計算（通勤＋対面研修）</div>
         <div id="commute-area"></div>
       </div>
@@ -1527,7 +1537,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.08-2';
+const APP_VERSION = 'v2026.07.16-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1799,31 +1809,55 @@ async function afterLogin() {
 // ==============================
 // GRAPH API
 // ==============================
+// SharePoint/Graph側の一時的エラーは自動リトライする（サーバー混雑・タイムアウト対策）
+function _isTransientGraphError(msg) {
+  const s = String(msg || '');
+  return /\((429|500|502|503|504)\)/.test(s)
+    || s.includes('MaxRequestDurationExceeded')
+    || s.includes('GatewayTimeout')
+    || s.includes('ServiceUnavailable')
+    || s.includes('ActivityLimitReached')
+    || s.includes('制限時間内に要求を完了できません')
+    || s.includes('通信がタイムアウト');
+}
+
 async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {}) {
-  state.token = await getToken();
-  const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), 60000); // 60秒でタイムアウト
-  const headers = {
-    'Authorization': `Bearer ${state.token}`,
-    'Content-Type': 'application/json',
-    ...extraHeaders
-  };
-  const opts = { method, headers, signal: ctrl.signal };
-  if (body) opts.body = typeof body === 'string' ? body : JSON.stringify(body);
-  try {
-    const res = await fetch('https://graph.microsoft.com/v1.0' + endpoint, opts);
-    clearTimeout(tid);
-    if (res.status === 204) return null;
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Graph API エラー (${res.status}): ${errText}`);
+  const MAX_RETRY = 3;
+  let lastErr;
+  for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
+    state.token = await getToken();
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 90000); // 90秒でタイムアウト
+    const headers = {
+      'Authorization': `Bearer ${state.token}`,
+      'Content-Type': 'application/json',
+      ...extraHeaders
+    };
+    const opts = { method, headers, signal: ctrl.signal };
+    if (body) opts.body = typeof body === 'string' ? body : JSON.stringify(body);
+    try {
+      const res = await fetch('https://graph.microsoft.com/v1.0' + endpoint, opts);
+      clearTimeout(tid);
+      if (res.status === 204) return null;
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Graph API エラー (${res.status}): ${errText}`);
+      }
+      return res.json();
+    } catch (err) {
+      clearTimeout(tid);
+      lastErr = (err.name === 'AbortError')
+        ? new Error('通信がタイムアウトしました（90秒）。SharePointが混雑している可能性があります。')
+        : err;
+      // 一時的エラーかつ再試行余地があればバックオフして再試行
+      if (attempt < MAX_RETRY && _isTransientGraphError(lastErr.message)) {
+        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        continue;
+      }
+      throw lastErr;
     }
-    return res.json();
-  } catch (err) {
-    clearTimeout(tid);
-    if (err.name === 'AbortError') throw new Error('通信がタイムアウトしました（60秒）。ネットワーク接続を確認してから再送信してください。');
-    throw err;
   }
+  throw lastErr;
 }
 
 async function callGraphBinary(endpoint, method, data) {
@@ -2575,7 +2609,7 @@ async function _renderInputSummary() {
 function _inputSummaryCellClick(el) {
   const { d, s, n, has } = el.dataset;
   if (has === '1') {
-    _openViewTab(d, n);
+    _openViewTab(d, n, state.selectedHome);
     return;
   }
   document.getElementById('input-date').value = d;
@@ -3915,9 +3949,19 @@ function _renderDayRecords(date, highlightName) {
 }
 
 // ---- 別タブで開く（URLパラメータでジャンプ先を指定） ----
-function _openViewTab(date, name) {
+// 利用者名から所属住居を特定
+function _findResidentHome(name) {
+  if (!name) return '';
+  const { homes } = getSettings();
+  const h = (homes || []).find(hh => (hh.residents || []).some(r => (r.name || r) === name));
+  return h ? h.name : '';
+}
+
+function _openViewTab(date, name, home) {
   const q = new URLSearchParams({ jump: 'view', date });
   if (name) q.set('name', name);
+  const hm = home || _findResidentHome(name);
+  if (hm) q.set('home', hm);
   window.open(location.pathname + '?' + q.toString(), '_blank');
 }
 
@@ -3964,7 +4008,15 @@ async function _handleJumpParams() {
   const home = p.get('home') || '';
   try {
     if (jump === 'view' && date) {
-      showViewer();
+      showViewer(true); // ドロップダウン構築のみ（自動検索はしない）
+      if (home) {
+        const hs = document.getElementById('viewer-home');
+        if (hs) { hs.value = home; updateViewerResidentFilter(); }
+      }
+      if (name) {
+        const rs = document.getElementById('viewer-resident');
+        if (rs && [...rs.options].some(o => o.value === name)) rs.value = name;
+      }
       await _viewerJumpToDate(date, name || undefined);
       return true;
     }
@@ -3989,7 +4041,7 @@ function _viewerCellClick(el) {
   const { d, s, n, has } = el.dataset;
   const newTab = localStorage.getItem('nippou_summary_newtab') === '1';
   if (has === '1') {
-    if (newTab) _openViewTab(d, n);
+    if (newTab) _openViewTab(d, n, document.getElementById('viewer-home')?.value);
     else _renderDayRecords(d, n);
   } else {
     _openInputTab(d, s, n);
@@ -7507,6 +7559,165 @@ function _renderCommutePreview() {
   }
 
   el.innerHTML = html || '<div style="font-size:12px;color:var(--text-muted);padding:8px">計算対象がありません</div>';
+}
+
+// ---------- 職員食事回数一覧 ----------
+const MEAL_BREAKFAST_PRICE = 120; // 朝食（早朝の「有」）
+const MEAL_DINNER_PRICE    = 200; // 夕食（日中の「有」）
+let _staffMealData = null;        // 印刷用に直近の集計結果を保持
+
+// 対象月の日報から職員別の朝食・夕食回数を集計
+async function _computeStaffMeals(ty, tm) {
+  const allRows = await readExcelAllRows();
+  const from = `${ty}-${String(tm).padStart(2,'0')}-01`;
+  const to   = `${ty}-${String(tm).padStart(2,'0')}-${String(new Date(ty,tm,0).getDate()).padStart(2,'0')}`;
+  const SR_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
+  const normN = s => String(s||'').replace(/[\s　]+/g,'').replace(/[髙﨑嵜齋齊邊邉濵桒]/g, c => SR_FOLD[c]).trim();
+
+  // 職員×日×ホーム×時間帯で重複排除しつつ、朝食・夕食回数を数える
+  const seen = new Set();
+  const map = {};   // 正規化名 → {disp, b, d}
+  for (const row of allRows) {
+    const date = _toDateStr(row.values[VH['報告日']]);
+    if (date < from || date > to) continue;
+    if (String(row.values[VH['職員食事']]||'').trim() !== '有') continue;
+    const slot = String(row.values[VH['時間帯']]||'');
+    if (slot !== '早朝' && slot !== '日中') continue; // 夜間は対象外
+    const dispRaw = String(row.values[VH['担当職員名']]||'').trim();
+    const sn = normN(dispRaw);
+    if (!sn) continue;
+    const home = String(row.values[VH['ホーム名']]||'');
+    const key = `${sn}_${date}_${home}_${slot}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (!map[sn]) map[sn] = { disp: dispRaw, b: 0, d: 0 };
+    if (slot === '早朝') map[sn].b++; else map[sn].d++;
+  }
+
+  // 並び順: スタッフ順序（個人コード順）を優先、未登録の職員は後ろに氏名順で
+  const srOrder = _getSrStaff();
+  const orderIndex = {};
+  srOrder.forEach((s, i) => { orderIndex[normN(s.name)] = i; });
+  const rows = Object.entries(map).map(([sn, v]) => {
+    const fee = v.b * MEAL_BREAKFAST_PRICE + v.d * MEAL_DINNER_PRICE;
+    return { norm: sn, name: v.disp, breakfast: v.b, dinner: v.d, fee };
+  });
+  rows.sort((a, b) => {
+    const ia = orderIndex[a.norm] ?? 99999, ib = orderIndex[b.norm] ?? 99999;
+    if (ia !== ib) return ia - ib;
+    return a.name.localeCompare(b.name, 'ja');
+  });
+  return rows;
+}
+
+async function renderStaffMealList() {
+  const el = document.getElementById('staff-meal-list');
+  const monthVal = document.getElementById('inv-sr-month')?.value;
+  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+  const [ty, tm] = monthVal.split('-').map(Number);
+  el.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px">集計中...</div>';
+  try {
+    const rows = await _computeStaffMeals(ty, tm);
+    _staffMealData = { ty, tm, rows };
+    if (!rows.length) {
+      el.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px;text-align:center">対象月に職員食事の記録がありません</div>';
+      return;
+    }
+    const totalB = rows.reduce((s, r) => s + r.breakfast, 0);
+    const totalD = rows.reduce((s, r) => s + r.dinner, 0);
+    const totalFee = rows.reduce((s, r) => s + r.fee, 0);
+    const TD = 'padding:5px 10px;border:1px solid #e0e0e0;font-size:12px';
+    const TH = 'padding:5px 10px;border:1px solid #ccc;background:#f5f5f5;font-size:12px;white-space:nowrap';
+    el.innerHTML = `
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">${ty}年${tm}月　職員食事回数（${rows.length}名）</div>
+      <div style="overflow-x:auto">
+        <table style="border-collapse:collapse;min-width:100%">
+          <thead><tr>
+            <th style="${TH};text-align:left">職員名</th>
+            <th style="${TH}">朝食（回）</th>
+            <th style="${TH}">夕食（回）</th>
+            <th style="${TH}">合計金額（円）</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r => `<tr>
+              <td style="${TD}">${escHtml(r.name)}</td>
+              <td style="${TD};text-align:right">${r.breakfast}</td>
+              <td style="${TD};text-align:right">${r.dinner}</td>
+              <td style="${TD};text-align:right;font-weight:700">${r.fee.toLocaleString()}</td>
+            </tr>`).join('')}
+            <tr style="background:#f8f9fa;font-weight:700">
+              <td style="${TD}">合計</td>
+              <td style="${TD};text-align:right">${totalB}</td>
+              <td style="${TD};text-align:right">${totalD}</td>
+              <td style="${TD};text-align:right">${totalFee.toLocaleString()}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">朝食 ${MEAL_BREAKFAST_PRICE}円 × 朝食回数 ＋ 夕食 ${MEAL_DINNER_PRICE}円 × 夕食回数</div>`;
+  } catch (e) {
+    console.error(e);
+    el.innerHTML = `<div style="color:#c62828;padding:12px;font-size:13px">エラー: ${escHtml(e.message)}</div>`;
+  }
+}
+
+async function printStaffMealList() {
+  const monthVal = document.getElementById('inv-sr-month')?.value;
+  if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
+  const [ty, tm] = monthVal.split('-').map(Number);
+  let data = _staffMealData;
+  if (!data || data.ty !== ty || data.tm !== tm) {
+    try { data = { ty, tm, rows: await _computeStaffMeals(ty, tm) }; _staffMealData = data; }
+    catch (e) { showToast('集計エラー: ' + e.message, 'error'); return; }
+  }
+  const rows = data.rows;
+  if (!rows.length) { showToast('対象月に職員食事の記録がありません', 'error'); return; }
+
+  const totalB = rows.reduce((s, r) => s + r.breakfast, 0);
+  const totalD = rows.reduce((s, r) => s + r.dinner, 0);
+  const totalFee = rows.reduce((s, r) => s + r.fee, 0);
+
+  const bodyRows = rows.map(r => `<tr>
+    <td class="tl">${_esc(r.name)}</td>
+    <td class="tr">${r.breakfast}</td>
+    <td class="tr">${r.dinner}</td>
+    <td class="tr">${r.fee.toLocaleString()}</td>
+  </tr>`).join('');
+
+  const html = `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<title>職員食事回数一覧 ${ty}年${tm}月</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Yu Gothic','Meiryo',sans-serif;color:#111;padding:16px}
+  h2{font-size:15pt;color:#1a3a5c;margin-bottom:4px}
+  .meta{font-size:9pt;color:#555;margin-bottom:12px}
+  table{width:100%;border-collapse:collapse}
+  th{background:#1a3a5c;color:#fff;padding:6px 8px;font-size:9.5pt;border:1px solid #0d2240}
+  td{padding:5px 8px;border:1px solid #999;font-size:10pt}
+  .tl{text-align:left}.tr{text-align:right}
+  tbody tr:nth-child(even){background:#f2f6fa}
+  tfoot td{font-weight:700;background:#e8eef4}
+  .note{font-size:8.5pt;color:#666;margin-top:10px}
+</style></head><body>
+  <h2>職員食事回数一覧</h2>
+  <div class="meta">${ty}年${tm}月　／　対象 ${rows.length}名　／　出力日 ${new Date().toLocaleDateString('ja-JP')}</div>
+  <table>
+    <thead><tr>
+      <th class="tl">職員名</th><th>朝食（回）</th><th>夕食（回）</th><th>合計金額（円）</th>
+    </tr></thead>
+    <tbody>${bodyRows}</tbody>
+    <tfoot><tr>
+      <td class="tl">合計</td><td class="tr">${totalB}</td><td class="tr">${totalD}</td><td class="tr">${totalFee.toLocaleString()}</td>
+    </tr></tfoot>
+  </table>
+  <div class="note">朝食 ${MEAL_BREAKFAST_PRICE}円 × 朝食回数 ＋ 夕食 ${MEAL_DINNER_PRICE}円 × 夕食回数　（朝食＝早朝、夕食＝日中の職員食事「有」を集計）</div>
+</body></html>`;
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(() => { win.focus(); win.print(); }, 500);
 }
 
 // ---------- 社労士シート ----------

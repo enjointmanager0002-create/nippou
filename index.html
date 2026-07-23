@@ -1537,7 +1537,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.16-1';
+const APP_VERSION = 'v2026.07.16-3';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -2008,11 +2008,14 @@ async function appendRowToExcel(rowData) {
       'POST',
       { values: [rowData] }
     );
+    invalidateDupCache(); // 書き込み後は全行キャッシュを破棄
     return true;
   } catch (e) {
     // Fallback: download, append, upload
     console.warn('Table API failed, using fallback:', e.message);
-    return await appendRowFallback(rowData);
+    const r = await appendRowFallback(rowData);
+    invalidateDupCache();
+    return r;
   }
 }
 
@@ -3578,7 +3581,9 @@ document.addEventListener('DOMContentLoaded', () => {
 const VIEWER_HEADERS = ['送信日時','報告日','ホーム名','利用者名','時間帯','担当職員名','勤務体系','職員食事','利用の有無','異常の有無','体調確認時間','体調確認方法','支援内容','食事内容','昼食準備','活動内容','連携及び調整','外泊','夜間支援','巡回時間','備考','体調'];
 const VH = Object.fromEntries(VIEWER_HEADERS.map((h, i) => [h, i]));
 let _viewerRows = [];
-let _dupCheckCache = null; // { rows, expiresAt } — submit画面での重複確認用キャッシュ
+let _dupCheckCache = null; // 互換のため残置（現在は _allRowsCache に統合）
+let _allRowsCache = null;  // { rows, expiresAt } — 日報全行の共有キャッシュ（書き込み時に破棄）
+const _ALLROWS_TTL = 120000; // 120秒
 
 // Excelがシリアル数値で返した日付を YYYY-MM-DD 文字列に変換
 // ==============================
@@ -3701,13 +3706,11 @@ function applyDraft(draft) {
 
 // 重複チェック用: Excelの全行を30秒間キャッシュして返す
 async function fetchRowsForDupCheck() {
-  const now = Date.now();
-  if (_dupCheckCache && now < _dupCheckCache.expiresAt) return _dupCheckCache.rows;
-  const rows = await readExcelAllRows();
-  _dupCheckCache = { rows, expiresAt: now + 30000 };
-  return rows;
+  // 共有キャッシュ（readExcelAllRows）に統合。書き込み時に invalidateDupCache で破棄される
+  return await readExcelAllRows();
 }
-function invalidateDupCache() { _dupCheckCache = null; }
+// 日報データを書き込んだら必ず呼ぶ（キャッシュ破棄）
+function invalidateDupCache() { _dupCheckCache = null; _allRowsCache = null; }
 
 function _toDateStr(v) {
   if (typeof v === 'number') {
@@ -3809,9 +3812,19 @@ async function searchRecords() {
   }
 }
 
-async function readExcelAllRows() {
-  const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
-  const sheetId = wsInfo.value[0].id;
+async function readExcelAllRows(forceFresh) {
+  const now = Date.now();
+  // 共有キャッシュ: セッション中は使い回し、書き込み時（invalidateDupCache）に破棄
+  if (!forceFresh && _allRowsCache && now < _allRowsCache.expiresAt) {
+    return _allRowsCache.rows;
+  }
+  // シートIDは同一ファイルで不変なので一度取得したら使い回す（毎回のworksheets呼び出しを削減）
+  let sheetId = state.excelSheetId;
+  if (!sheetId) {
+    const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
+    sheetId = wsInfo.value[0].id;
+    state.excelSheetId = sheetId;
+  }
   const range = await callGraph(
     `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/usedRange`
   );
@@ -3823,6 +3836,7 @@ async function readExcelAllRows() {
     if (!v[1]) continue;
     rows.push({ excelRow: startRow + i, values: v });
   }
+  _allRowsCache = { rows, expiresAt: now + _ALLROWS_TTL };
   return rows;
 }
 
@@ -4637,8 +4651,8 @@ async function saveEditRecord() {
 
   try {
     // 保存直前にシートを再読み込みして正確な行番号を取得
-    // （他スタッフの送信によるキャッシュズレを防ぐ）
-    const freshRows = await readExcelAllRows();
+    // （他スタッフの送信によるキャッシュズレを防ぐ。ここは必ず最新を取得）
+    const freshRows = await readExcelAllRows(true);
 
     // 送信日時・利用者名・時間帯で該当行を特定（内容一致で正しい行を探す）
     const sendTime   = String(original[VH['送信日時']]  || '');
@@ -4678,6 +4692,7 @@ async function updateExcelRow(excelRowNum, rowData) {
     'PATCH',
     { values: [rowData] }
   );
+  invalidateDupCache(); // 書き込み後は全行キャッシュを破棄
 }
 
 async function deleteExcelRow(excelRowNum) {
@@ -4694,6 +4709,7 @@ async function deleteExcelRow(excelRowNum) {
     `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/itemAt(index=${idx})`,
     'DELETE'
   );
+  invalidateDupCache(); // 書き込み後は全行キャッシュを破棄
 }
 
 async function deleteRecord(excelRow) {
@@ -6808,7 +6824,8 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
 // ---------- 交通費計算（通勤＋対面研修） ----------
 const COMMUTE_KEY  = 'nippou_commute';
 const COMMUTE_FILE = '交通費設定.json';
-const COMMUTE_RATE = 35; // 円/km
+const COMMUTE_RATE = 15;      // 円/km（職員支給の交通費単価。利用者請求書の送迎代35円とは別）
+const COMMUTE_CAP  = 18000;   // 職員支給の交通費 月額上限（円）
 
 // 氏名・場所名の正規化（空白除去＋異体字統一）
 const _COMMUTE_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
@@ -7280,11 +7297,13 @@ function _calcCommute(ym) {
     }
   }
 
-  // 交通費: 距離合計を0.1km丸め → ×35円を四捨五入（職員別月間合計シート方式）
+  // 交通費: 距離合計を0.1km丸め → ×単価を四捨五入 → 月額上限を適用
   for (const norm of Object.keys(perStaff)) {
     const km = Math.round(perStaff[norm].km * 10) / 10;
     perStaff[norm].km = km;
-    perStaff[norm].fee = Math.round(km * COMMUTE_RATE);
+    const raw = Math.round(km * COMMUTE_RATE);
+    perStaff[norm].fee = Math.min(raw, COMMUTE_CAP);       // 上限適用後の支給額
+    perStaff[norm].capped = raw > COMMUTE_CAP;             // 上限に達したか（表示用）
   }
   // 基本勤務地未設定は職員単位にまとめる
   const needBaseMap = {};
@@ -7550,12 +7569,12 @@ function _renderCommutePreview() {
               <td style="${TD};text-align:right">${d.staffAddr[n]?.code ?? ''}</td>
               <td style="${TD}">${escHtml(perStaff[n].disp)}</td>
               <td style="${TD};text-align:right">${perStaff[n].km.toFixed(1)}</td>
-              <td style="${TD};text-align:right;font-weight:700">${perStaff[n].fee.toLocaleString()}</td>
+              <td style="${TD};text-align:right;font-weight:700">${perStaff[n].fee.toLocaleString()}${perStaff[n].capped ? '<span style="font-size:10px;color:#e65100;font-weight:400"> (上限)</span>' : ''}</td>
             </tr>`).join('')}
           </tbody>
         </table>
       </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">この金額が社労士シートの「交通費」列に自動反映されます（距離合計を0.1km単位に丸め × ${COMMUTE_RATE}円）。</div>`;
+      <div style="font-size:11px;color:var(--text-muted);margin-top:6px">この金額が社労士シートの「交通費」列に自動反映されます（距離合計を0.1km単位に丸め × ${COMMUTE_RATE}円、月額上限 ${COMMUTE_CAP.toLocaleString()}円）。「(上限)」は上限に達し減額された職員です。</div>`;
   }
 
   el.innerHTML = html || '<div style="font-size:12px;color:var(--text-muted);padding:8px">計算対象がありません</div>';

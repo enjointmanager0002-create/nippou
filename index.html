@@ -1537,7 +1537,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.16-3';
+const APP_VERSION = 'v2026.07.27-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -2011,12 +2011,51 @@ async function appendRowToExcel(rowData) {
     invalidateDupCache(); // 書き込み後は全行キャッシュを破棄
     return true;
   } catch (e) {
-    // Fallback: download, append, upload
-    console.warn('Table API failed, using fallback:', e.message);
-    const r = await appendRowFallback(rowData);
+    // テーブルAPIが例外を返しても、サーバー側では書込済みのことがある
+    // （タイムアウト・通信断など）。ここで無条件に再追記すると重複行になるため、
+    // まず再読込して「該当行が既に書けているか」を確認する。
+    console.warn('Table API failed, verifying before retry:', e.message);
     invalidateDupCache();
-    return r;
+    try {
+      const fresh = await readExcelAllRows(true);
+      if (_rowAlreadyWritten(fresh, rowData)) {
+        console.info('書込済みを確認、重複追記を回避');
+        return true;
+      }
+    } catch (verifyErr) {
+      console.warn('書込確認の再読込に失敗:', verifyErr.message);
+    }
+    // 未書込を確認 → もう一度テーブルAPIで追記（テーブル外の行を作らない）
+    try {
+      await callGraph(
+        `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/add`,
+        'POST',
+        { values: [rowData] }
+      );
+      invalidateDupCache();
+      return true;
+    } catch (e2) {
+      // それでも失敗する場合のみ、最終手段としてレンジ直書きフォールバック
+      console.warn('Table API retry failed, using fallback:', e2.message);
+      const r = await appendRowFallback(rowData);
+      invalidateDupCache();
+      return r;
+    }
   }
+}
+
+// rowData と同一の記録（利用者名・報告日・時間帯が一致）が既存行にあるか。
+// 追記は「同一利用者・同日・同時間帯が未存在」の場合のみ呼ばれるため、
+// この3項目一致は今回書き込もうとした行の重複を確実に示す。
+function _rowAlreadyWritten(rows, rowData) {
+  const name = String(rowData[VH['利用者名']] ?? '');
+  const date = _toDateStr(rowData[VH['報告日']]);
+  const slot = String(rowData[VH['時間帯']] ?? '');
+  return rows.some(er =>
+    String(er.values[VH['利用者名']]) === name &&
+    _toDateStr(er.values[VH['報告日']]) === date &&
+    String(er.values[VH['時間帯']]) === slot
+  );
 }
 
 async function appendRowFallback(rowData) {
@@ -4697,19 +4736,45 @@ async function updateExcelRow(excelRowNum, rowData) {
 
 async function deleteExcelRow(excelRowNum) {
   // データはテーブルとして保存されているため、range delete（shift up）は
-  // insertDeleteConflict で拒否される。テーブル行APIで削除する。
+  // insertDeleteConflict で拒否される。まずテーブル行APIで物理削除を試みる。
   // テーブルの開始行を取得して、絶対行番号→テーブル内インデックス（0始まり）に変換
-  const rangeInfo = await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/range?$select=address`);
-  const m = String(rangeInfo.address || '').match(/![A-Z]+(\d+):/);
-  const headerRow = m ? parseInt(m[1]) : 1;
-  const idx = excelRowNum - headerRow - 1;
-  if (idx < 0) throw new Error(`削除対象の行番号が不正です（行${excelRowNum}）`);
-  await callGraph(
-    `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/itemAt(index=${idx})`,
-    'DELETE'
-  );
+  try {
+    const rangeInfo = await callGraph(
+      `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/range?$select=address`);
+    const m = String(rangeInfo.address || '').match(/![A-Z]+(\d+):/);
+    const headerRow = m ? parseInt(m[1]) : 1;
+    const idx = excelRowNum - headerRow - 1;
+    if (idx < 0) throw new Error(`削除対象の行番号が不正です（行${excelRowNum}）`);
+    await callGraph(
+      `${driveItem(state.excelFileId)}/workbook/tables('${CONFIG.tableName}')/rows/itemAt(index=${idx})`,
+      'DELETE'
+    );
+  } catch (e) {
+    // テーブル外の行がシートに紛れていると、物理削除でもセルが移動して
+    // insertDeleteConflict になる。その場合はセルを一切動かさない
+    // 「値クリア（論理削除）」にフォールバックする。
+    // 閲覧側は報告日（B列）が空の行を読み飛ばすため、画面からは確実に消える。
+    console.warn('行の物理削除に失敗、値クリア（論理削除）にフォールバック:', e.message);
+    await _blankExcelRow(excelRowNum);
+  }
   invalidateDupCache(); // 書き込み後は全行キャッシュを破棄
+}
+
+// 指定行の全セルを空白化する。セルを移動させないため insertDeleteConflict を起こさない。
+async function _blankExcelRow(excelRowNum) {
+  let sheetId = state.excelSheetId;
+  if (!sheetId) {
+    const wsInfo = await callGraph(`${driveItem(state.excelFileId)}/workbook/worksheets`);
+    sheetId = wsInfo.value[0].id;
+    state.excelSheetId = sheetId;
+  }
+  const nCols = VIEWER_HEADERS.length;
+  const colEnd = String.fromCharCode(64 + nCols);
+  await callGraph(
+    `${driveItem(state.excelFileId)}/workbook/worksheets/${encodeURIComponent(sheetId)}/range(address='A${excelRowNum}:${colEnd}${excelRowNum}')`,
+    'PATCH',
+    { values: [Array(nCols).fill('')] }
+  );
 }
 
 async function deleteRecord(excelRow) {

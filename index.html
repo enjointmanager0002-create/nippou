@@ -2201,7 +2201,6 @@ function _collectHomesFromDOM() {
   return Array.from(document.querySelectorAll('.home-block')).map(block => ({
     name: block.querySelector('.home-name-input').value.trim(),
     capacity: Number(block.querySelector('.home-capacity-input')?.value || 0),
-    jurisdiction: block.querySelector('.home-jurisdiction-input')?.value || '',
     residents: Array.from(block.querySelectorAll('.resident-list-item')).map(item => {
       const name = item.querySelector('.resident-name-input').value.trim();
       const kubuns = Array.from(item.querySelectorAll('.kubun-period-row')).map(row => ({
@@ -2423,7 +2422,6 @@ function renderHomeBlock(container, home, idx) {
   const div = document.createElement('div');
   div.className = 'home-block';
   div.style.cssText = 'border:1.5px solid var(--border);border-radius:10px;padding:12px;margin-bottom:12px';
-  const jVal = _homeJurisdiction(home);
   div.innerHTML = `
     <details ${home.name ? '' : 'open'}>
       <summary style="cursor:pointer;padding:10px 4px;font-size:14px;font-weight:700;color:var(--primary);user-select:none">
@@ -2438,13 +2436,6 @@ function renderHomeBlock(container, home, idx) {
           <input type="number" class="home-capacity-input form-input" value="${home.capacity || ''}"
                  placeholder="定員" title="定員（稼働率計算に使用）" style="width:70px;margin:0;flex-shrink:0">
           <button class="btn-icon" onclick="this.closest('.home-block').remove()" title="住居削除" style="flex-shrink:0">✕</button>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-          <label style="font-size:12px;color:var(--text-muted);flex-shrink:0">管轄</label>
-          <select class="home-jurisdiction-input form-select" style="flex:1;margin:0" title="稼働率・人員・請求の管轄振り分けに使用">
-            <option value="高崎管轄" ${jVal === '高崎管轄' ? 'selected' : ''}>高崎管轄</option>
-            <option value="群馬管轄" ${jVal === '群馬管轄' ? 'selected' : ''}>群馬管轄</option>
-          </select>
         </div>
         <div class="resident-name-list" style="margin-bottom:8px">
           ${(home.residents || []).map((r, i) => _residentItemHtml(r, i)).join('')}
@@ -6709,17 +6700,9 @@ function _invMatchesJurisdiction(home, jurisdiction) {
   return jurisdiction === '高崎管轄' ? isTakasaki : !isTakasaki;
 }
 
-// 住居の管轄を返す。設定で明示登録された home.jurisdiction を最優先し、
-// 未設定なら住居名から推測する（サテライト等は地名の部分一致で高崎判定）。
-function _homeJurisdiction(home) {
-  if (home && home.jurisdiction) return home.jurisdiction;
-  const norm = s => String(s || '')
-    .replace(/[\s　]+/g, '')
-    .replace(/住居$/, '')
-    .replace(/(II|Ⅱ|2|２)$/, 'Ⅱ');
-  const nm = norm(home && home.name);
-  const isTakasaki = INV_TAKASAKI_HOMES.some(h => nm.includes(norm(h)));
-  return isTakasaki ? '高崎管轄' : '群馬管轄';
+// サテライト住居は日報記録を取らず稼働率を算出できないため、稼働率レポートから除外する。
+function _isSatelliteHome(name) {
+  return String(name || '').includes('サテライト');
 }
 
 async function generateInvoiceCsv() {
@@ -8061,7 +8044,9 @@ async function renderKadou() {
 
     const sections = (juris === '全て' ? ['高崎管轄', '群馬管轄'] : [juris]).map(j => ({
       title: j,
-      rows: buildRows((homes || []).filter(h => h.name && _homeJurisdiction(h) === j)),
+      // サテライト住居は日報を取らず稼働率を出せないため除外する
+      rows: buildRows((homes || []).filter(h =>
+        h.name && !_isSatelliteHome(h.name) && _invMatchesJurisdiction(h.name, j))),
     }));
 
     const TD = 'padding:5px 10px;border:1px solid #e0e0e0;font-size:12px;text-align:right';

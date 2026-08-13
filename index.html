@@ -1537,7 +1537,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.27-2';
+const APP_VERSION = 'v2026.07.27-6';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -6691,9 +6691,12 @@ const INV_TAKASAKI_HOMES = ['下豊岡', '筑縄', '双葉', '下豊岡Ⅱ', '�
 
 function _invMatchesJurisdiction(home, jurisdiction) {
   if (jurisdiction === '全て') return true;
-  // 空白・「住居」サフィックスを除去し、ローマ数字Ⅱの表記ゆれ（II・2・２）を統一して比較
+  // 空白・「住居」サフィックス・「サテライト」表記を除去し、
+  // ローマ数字Ⅱの表記ゆれ（II・2・２）を統一して比較する。
+  // これにより「サテライト南大類」も地名「南大類」として高崎管轄に振り分けられる。
   const norm = s => String(s || '')
     .replace(/[\s　]+/g, '')
+    .replace(/サテライト/g, '')
     .replace(/住居$/, '')
     .replace(/(II|Ⅱ|2|２)$/, 'Ⅱ');
   const isTakasaki = INV_TAKASAKI_HOMES.some(h => norm(h) === norm(home));
@@ -6782,9 +6785,14 @@ async function generateInvoiceCsv() {
 
 function _buildInvItems(resident, year, month, monthRows, formsData) {
   const items = [];
-  // 異体字を統一して照合（日報と入居者登録で表記が揺れても一致させる）
-  const KANJI_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
-  const normN = s => String(s||'').replace(/[\s　]+/g,'').replace(/[髙﨑嵜齋齊邊邉濵桒]/g, c => KANJI_FOLD[c]).trim();
+  // 異体字（旧字体等）を統一して照合（日報・車両運行記録・入居者登録で表記が揺れても一致させる）
+  const KANJI_FOLD = {
+    '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑',
+    '櫻':'桜', '澤':'沢', '濱':'浜', '眞':'真', '惠':'恵', '國':'国', '廣':'広', '龍':'竜', '槇':'槙',
+    '德':'徳', '瀨':'瀬', '曾':'曽', '假':'仮', '圓':'円'
+  };
+  const _foldRe = new RegExp('[' + Object.keys(KANJI_FOLD).join('') + ']', 'g');
+  const normN = s => String(s||'').replace(/[\s　]+/g,'').replace(_foldRe, c => KANJI_FOLD[c]).trim();
   const rName = normN(resident.name);
 
   // 家賃
@@ -6852,7 +6860,10 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
     const resNames = (row.residents||'').split(/[,、，・\s　]+/)
       .map(s => normN(s).replace(/(さん|様|君|くん|ちゃん)$/, ''))
       .filter(Boolean);
-    if (!resNames.includes(rName)) continue;
+    // 完全一致（複数名をスペース・読点区切りで記載）に加え、
+    // 空白除去後の全体文字列に氏名が含まれるかも判定（「猪爪 隆」等の氏名内スペースに対応）
+    const resWhole = normN(row.residents || '');
+    if (!resNames.includes(rName) && !(rName && resWhole.includes(rName))) continue;
     transport.push({ date: row.date, km: row.km||0, destination: row.destination||'' });
   }
   if (transport.length > 0) {
@@ -7951,7 +7962,8 @@ async function generateSrExcel() {
       mealMap[sn] = (mealMap[sn]||0) + (slot === '早朝' ? 120 : 200);
     }
 
-    // 立替精算（tatekakin + sharyou自家用車スタッフのみ×35）
+    // 立替精算（tatekakin + sharyou自家用車スタッフのみ×交通費単価）
+    // 自家用車走行分の単価は交通費支給と揃える（COMMUTE_RATE=15円/km）
     const tatekaeMap = {};
     for (const t of (formsData.tatekakin||[])) {
       if (!t.date?.startsWith(ymStr)) continue;
@@ -7962,7 +7974,7 @@ async function generateSrExcel() {
       if (!s.date?.startsWith(ymStr)) continue;
       if (s.reason !== 'スタッフのみ' || s.carType !== '自家用車') continue;
       const n = normN(s.name);
-      tatekaeMap[n] = (tatekaeMap[n]||0) + (s.km||0) * 35;
+      tatekaeMap[n] = (tatekaeMap[n]||0) + (s.km||0) * COMMUTE_RATE;
     }
 
     // 交通費（勤怠項目別集計CSV＋対面研修から計算。未登録分は0のまま出力される）

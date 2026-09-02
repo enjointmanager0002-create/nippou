@@ -1119,11 +1119,14 @@
           style="flex:1;padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#fff;border-bottom:3px solid transparent;color:var(--text-muted);cursor:pointer">利用日数</button>
         <button id="usage-tab-meals" onclick="switchUsageMode('meals')"
           style="flex:1;padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#fff;border-bottom:3px solid transparent;color:var(--text-muted);cursor:pointer">食事回数</button>
+        <button id="usage-tab-verify" onclick="switchUsageMode('verify')"
+          style="flex:1;padding:10px 4px;font-size:13px;font-weight:700;border:none;background:#fff;border-bottom:3px solid transparent;color:var(--text-muted);cursor:pointer">紙照合</button>
       </div>
     </div>
     <div id="usage-results-status"></div>
     <div id="usage-results-days"  style="display:none"></div>
     <div id="usage-results-meals" style="display:none"></div>
+    <div id="usage-results-verify" style="display:none"></div>
   </div>
 </div>
 
@@ -1537,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.07.27-6';
+const APP_VERSION = 'v2026.09.02-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -4823,6 +4826,8 @@ function showUsageScreen() {
   document.getElementById('usage-results-status').innerHTML = '';
   document.getElementById('usage-results-days').innerHTML = '';
   document.getElementById('usage-results-meals').innerHTML = '';
+  document.getElementById('usage-results-verify').innerHTML = '';
+  _mvBase = null; _mvBlocks = null;
   document.getElementById('usage-tab-bar').style.display = 'none';
   _usageMode = 'status';
   showScreen('usage');
@@ -4830,7 +4835,7 @@ function showUsageScreen() {
 
 function switchUsageMode(mode) {
   _usageMode = mode;
-  const TABS = ['status', 'days', 'meals'];
+  const TABS = ['status', 'days', 'meals', 'verify'];
   for (const t of TABS) {
     const tab = document.getElementById(`usage-tab-${t}`);
     const div = document.getElementById(`usage-results-${t}`);
@@ -4888,6 +4893,7 @@ async function searchUsageReport() {
   const stDiv = document.getElementById('usage-results-status');
   const dyDiv = document.getElementById('usage-results-days');
   const mlDiv = document.getElementById('usage-results-meals');
+  const vfDiv = document.getElementById('usage-results-verify');
 
   if (!homeName) { showToast('住居を選択してください', 'error'); return; }
   if (!monthVal) { showToast('対象月を選択してください', 'error'); return; }
@@ -4895,6 +4901,8 @@ async function searchUsageReport() {
   stDiv.innerHTML = '<div style="text-align:center;padding:32px;color:var(--text-muted)">読み込み中...</div>';
   dyDiv.innerHTML = '';
   mlDiv.innerHTML = '';
+  vfDiv.innerHTML = '';
+  _mvBase = null; _mvBlocks = null;
   document.getElementById('usage-tab-bar').style.display = 'none';
 
   try {
@@ -4944,6 +4952,11 @@ async function searchUsageReport() {
 
     // 食事回数タブ
     mlDiv.innerHTML = renderMealCountTable(days, residents, lookup, homeName, y, m);
+
+    // 紙照合タブ（データ側マトリクスを保持してパネルを描画）
+    _mvBase = buildMealMatrix(days, residents, lookup, homeName, y, m);
+    _mvBlocks = null;
+    renderMealVerifyPanel();
 
     // タブバー表示・初期タブを現在のモードに合わせる
     document.getElementById('usage-tab-bar').style.display = 'block';
@@ -8758,6 +8771,631 @@ ${recordText}
   } catch (e) {
     contentEl.innerHTML = `<div style="color:#c62828;padding:20px">エラー: ${escHtml(e.message)}</div>`;
   }
+}
+
+
+// ==============================
+// 食数表 紙照合（PDF/画像 × 日報データ）
+// ==============================
+const MV_PDFJS_LIB    = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+const MV_PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+let _mvBase    = null;  // 日報データ側のマトリクス
+let _mvBlocks  = null;  // 紙から抽出したブロック
+let _mvPdfProm = null;
+
+// --- データ側マトリクス --------------------------------------------------
+function _mvSym(raw) {
+  const v = String(raw || '').split('\n')[0].trim();
+  if (v === '提供あり') return '●';
+  if (v === '主食のみ提供' || v === '主食のみ') return '米';
+  if (v === '提供無し' || v === '提供なし') return '×';
+  return '';
+}
+
+// 紙の食数表と同じ「利用者 × 日 × 朝昼夕」の形にデータ側を整形する
+function buildMealMatrix(days, residents, lookup, homeName, year, month) {
+  const cells = {};
+  for (const name of residents) {
+    cells[name] = {};
+    for (const date of days) {
+      const day   = Number(date.slice(8, 10));
+      const early = (lookup[date] || {})['早朝']?.[name];
+      const noon  = (lookup[date] || {})['日中']?.[name];
+      cells[name][day] = {
+        a:  early ? _mvSym(early[VH['食事内容']]) : '',
+        l:  early ? _mvSym(early[VH['昼食準備']]) : '',
+        y:  noon  ? _mvSym(noon[VH['食事内容']])  : '',
+        ra: !!early,
+        ry: !!noon,
+      };
+    }
+  }
+  return { homeName, year, month, lastDay: days.length, residents: residents.slice(), cells };
+}
+
+function renderMealVerifyPanel() {
+  const div = document.getElementById('usage-results-verify');
+  if (!div) return;
+  if (!_mvBase) {
+    div.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px">先に上の「表示する」を押してデータを読み込んでください</div>';
+    return;
+  }
+  const b = _mvBase;
+  div.innerHTML = `
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">紙の食数表と照合</div>
+      <p style="font-size:12px;color:#666;margin:0 0 12px;line-height:1.7">
+        <b>${escHtml(b.homeName)}　${b.year}年${b.month}月</b> のデータと、記入済み食数表をスキャンしたPDF（または写真）を突き合わせます。<br>
+        差分が出たマスだけを一覧表示するので、全マスを目視する必要がなくなります。
+      </p>
+      <div class="form-group" style="margin:0 0 10px">
+        <label class="form-label">スキャンファイル（PDF / JPEG / PNG・複数ページ可）</label>
+        <input type="file" id="mv-file" accept="application/pdf,image/*" class="form-input" style="margin:0;padding:8px">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group" style="margin:0">
+          <label class="form-label">向きの補正</label>
+          <select id="mv-rotate" class="form-select" style="margin:0">
+            <option value="auto">自動（横向きなら左90°）</option>
+            <option value="0">回転なし</option>
+            <option value="90">右90°</option>
+            <option value="180">180°</option>
+            <option value="270">左90°</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin:0">
+          <label class="form-label">読み取り方式</label>
+          <select id="mv-split" class="form-select" style="margin:0">
+            <option value="band">分割して精密読み（推奨）</option>
+            <option value="none">1枚のまま読む（写真・変形時）</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" style="margin:10px 0 0">
+        <label class="form-label">読み取りモデル</label>
+        <select id="mv-model" class="form-select" style="margin:0">
+          <option value="claude-opus-5">高精度（Claude Opus 5）</option>
+          <option value="claude-sonnet-5">標準・低コスト（Claude Sonnet 5）</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-secondary" style="flex:1;min-width:130px" onclick="mvPreview()">送信画像を確認</button>
+        <button class="btn btn-primary"   style="flex:1;min-width:130px" onclick="mvRunExtract()">読み取りを開始</button>
+      </div>
+      <p style="font-size:11px;color:#aaa;margin:8px 0 0;line-height:1.6">
+        ※ 読み取りにはClaude APIを使用します（設定画面のAPIキーが必要）。目安は1ページあたり20〜30円です。<br>
+        ※ 手書き文字は誤読の可能性があります。差分として出たマスは必ず紙で確認してください。
+      </p>
+    </div>
+    <div id="mv-status" style="font-size:12px;color:var(--primary);padding:0 4px 8px"></div>
+    <div id="mv-thumbs"></div>
+    <div id="mv-map"></div>
+    <div id="mv-result"></div>
+  `;
+}
+
+function _mvStatus(msg, isError) {
+  const el = document.getElementById('mv-status');
+  if (el) el.innerHTML = msg ? `<span style="color:${isError ? '#c62828' : 'var(--primary)'}">${escHtml(msg)}</span>` : '';
+}
+
+// --- pdf.js 遅延読み込み --------------------------------------------------
+function _mvEnsurePdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_mvPdfProm) return _mvPdfProm;
+  _mvPdfProm = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = MV_PDFJS_LIB;
+    s.onload = () => {
+      if (!window.pdfjsLib) { reject(new Error('pdf.js の初期化に失敗しました')); return; }
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = MV_PDFJS_WORKER;
+      resolve(window.pdfjsLib);
+    };
+    s.onerror = () => { _mvPdfProm = null; reject(new Error('pdf.js を取得できません（オフラインでは照合できません）')); };
+    document.head.appendChild(s);
+  });
+  return _mvPdfProm;
+}
+
+// --- 画像処理 -------------------------------------------------------------
+function _mvRotateCanvas(cv, deg) {
+  deg = ((Number(deg) % 360) + 360) % 360;
+  if (!deg) return cv;
+  const swap = (deg === 90 || deg === 270);
+  const out = document.createElement('canvas');
+  out.width  = swap ? cv.height : cv.width;
+  out.height = swap ? cv.width  : cv.height;
+  const ctx = out.getContext('2d');
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate(deg * Math.PI / 180);
+  ctx.drawImage(cv, -cv.width / 2, -cv.height / 2);
+  return out;
+}
+
+function _mvCropBand(cv, y0, y1, maxEdge) {
+  const sy = Math.max(0, Math.floor(cv.height * y0));
+  const sh = Math.max(1, Math.min(cv.height - sy, Math.ceil(cv.height * (y1 - y0))));
+  const k  = Math.min(1, maxEdge / Math.max(cv.width, sh));
+  const out = document.createElement('canvas');
+  out.width  = Math.max(1, Math.round(cv.width * k));
+  out.height = Math.max(1, Math.round(sh * k));
+  const ctx = out.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.drawImage(cv, 0, sy, cv.width, sh, 0, 0, out.width, out.height);
+  return out;
+}
+
+// 帯は互いに重ねて切り出す（行が途切れても別の帯で必ず全体が写る）
+const MV_BANDS = [
+  { y0: 0.00, y1: 0.30, label: 'ページ上部（氏名の記入欄と表の見出しを含む）' },
+  { y0: 0.24, y1: 0.53, label: '上段の日付行（重複あり）' },
+  { y0: 0.47, y1: 0.79, label: '中段の日付行（重複あり）' },
+  { y0: 0.72, y1: 1.00, label: '下段の日付行（重複あり）' },
+];
+
+function _mvMakeStrips(cv, split) {
+  if (split === 'none') {
+    return [{ label: 'ページ全体', canvas: _mvCropBand(cv, 0, 1, 1500) }];
+  }
+  return MV_BANDS.map(b => ({ label: b.label, canvas: _mvCropBand(cv, b.y0, b.y1, 1500) }));
+}
+
+function _mvLoadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('画像を読み込めませんでした')); };
+    img.src = url;
+  });
+}
+
+// ファイル → ページ単位の大きなcanvas配列
+async function _mvFileToPages(file, rotateOpt, onProgress) {
+  const LONG_EDGE = 2400;
+  const rot = raw => {
+    let deg = rotateOpt === 'auto' ? (raw.width > raw.height ? 270 : 0) : Number(rotateOpt);
+    return _mvRotateCanvas(raw, deg);
+  };
+  const pages = [];
+
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
+    const pdfjsLib = await _mvEnsurePdfJs();
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    for (let p = 1; p <= pdf.numPages; p++) {
+      onProgress && onProgress(`PDFを画像化中... (${p}/${pdf.numPages}ページ)`);
+      const page = await pdf.getPage(p);
+      const base = page.getViewport({ scale: 1 });
+      const scale = Math.min(5, Math.max(1, LONG_EDGE / Math.max(base.width, base.height)));
+      const vp = page.getViewport({ scale });
+      const cv = document.createElement('canvas');
+      cv.width  = Math.round(vp.width);
+      cv.height = Math.round(vp.height);
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      // intent:'print' は requestAnimationFrame を使わないため、タブが背面でも描画が止まらない
+      await page.render({ canvasContext: ctx, viewport: vp, intent: 'print' }).promise;
+      pages.push(rot(cv));
+    }
+  } else {
+    onProgress && onProgress('画像を読み込み中...');
+    const img = await _mvLoadImageFile(file);
+    const scale = Math.min(3, Math.max(0.2, LONG_EDGE / Math.max(img.width, img.height)));
+    const cv = document.createElement('canvas');
+    cv.width  = Math.round(img.width * scale);
+    cv.height = Math.round(img.height * scale);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    pages.push(rot(cv));
+  }
+  return pages;
+}
+
+async function mvPreview() {
+  const file = document.getElementById('mv-file')?.files?.[0];
+  const thumbs = document.getElementById('mv-thumbs');
+  if (!file) { showToast('スキャンファイルを選択してください', 'error'); return; }
+  thumbs.innerHTML = '';
+  _mvStatus('画像を準備中...');
+  try {
+    const rotate = document.getElementById('mv-rotate').value;
+    const split  = document.getElementById('mv-split').value;
+    const pages  = await _mvFileToPages(file, rotate, m => _mvStatus(m));
+    let html = '';
+    pages.forEach((cv, pi) => {
+      const strips = _mvMakeStrips(cv, split);
+      html += `<div class="card" style="margin-top:12px"><div class="card-title">${pi + 1}ページ目の送信画像（${strips.length}枚）</div>`;
+      strips.forEach(s => {
+        html += `<div style="margin-bottom:10px">
+          <div style="font-size:11px;color:#888;margin-bottom:4px">${escHtml(s.label)}</div>
+          <img src="${s.canvas.toDataURL('image/jpeg', 0.7)}" style="width:100%;border:1px solid #ddd;border-radius:6px">
+        </div>`;
+      });
+      html += '</div>';
+    });
+    thumbs.innerHTML = html;
+    _mvStatus('この向き・範囲で読み取ります。文字が上下正しく写っているか確認してください。');
+  } catch (e) {
+    _mvStatus(`エラー: ${e.message}`, true);
+  }
+}
+
+// --- AI読み取り -----------------------------------------------------------
+const MV_PROMPT = `あなたは手書き帳票の読み取りを専門とするアシスタントです。上の画像は、障害者グループホームで使われている「食数表」1ページをスキャンしたものです。
+
+【用紙の構造】
+- 横方向に利用者ごとのブロックが最大5つ並びます（左から順にブロック1、2、3…）。
+- 各ブロックは「日付」「朝」「昼」「夕」の4列です。
+- 行は上から「例」（記入例なので必ず無視する）、続いて1日から31日までです。
+- 各ブロックの最上部「氏名」欄に、手書きで利用者名が書かれています（空欄のブロックもあります）。
+
+【記号の意味】
+- ● 黒く塗りつぶした丸 ＝ 食事を1セット提供
+- 米 漢字の「米」 ＝ 主食のみ提供
+- × バツ ＝ 提供なし
+- 印刷された薄い「○」のみで手書きの記入が重なっていないマスは「未記入」として扱う
+
+【出力形式】
+次のJSONのみを出力してください。説明文やコードフェンスは不要です。
+{"blocks":[{"i":1,"name":"氏名","rows":[{"d":1,"a":"●","l":"×","y":"米"}]}]}
+- i … ブロック番号（左から1〜5）
+- name … 読み取れた氏名。読めない場合は空文字
+- d … 日付（1〜31の整数）
+- a … 朝、l … 昼、y … 夕
+- 各記号は "●" "米" "×" のいずれか。未記入は ""、判別できない場合は "?"
+
+【厳守事項】
+- 「例」の行は絶対に出力しない。
+- 推測で埋めない。少しでも迷ったら "?" にする。
+- 氏名も記入も一切ない空のブロックは blocks に含めない。
+- 各ブロックについて、画像に写っている1日から31日までのすべての行を出力する。`;
+
+function _mvParseJson(text) {
+  let t = String(text || '').trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  const s = t.indexOf('{'), e = t.lastIndexOf('}');
+  if (s < 0 || e <= s) throw new Error('AIの応答からJSONを取り出せませんでした');
+  return JSON.parse(t.slice(s, e + 1));
+}
+
+function _mvNormSym(v) {
+  const s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  if (s === '?' || s === '？') return '?';
+  if (['●','◯●','・','丸','黒丸','●印'].includes(s)) return '●';
+  if (['米','米印'].includes(s)) return '米';
+  if (['×','x','X','✕','✗','ばつ','バツ'].includes(s)) return '×';
+  if (['○','◯','空','空欄','未記入','なし','-','ー'].includes(s)) return '';
+  return '?';
+}
+
+async function _mvCallApi(strips, model, apiKey) {
+  const content = [];
+  strips.forEach((s, i) => {
+    content.push({ type: 'text', text: `画像${i + 1}：${s.label}` });
+    content.push({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: s.canvas.toDataURL('image/jpeg', 0.92).split(',')[1] },
+    });
+  });
+  content.push({ type: 'text', text: MV_PROMPT });
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ model, max_tokens: 16000, stream: true, messages: [{ role: 'user', content }] }),
+  });
+
+  if (!res.ok) {
+    let msg = `APIエラー: ${res.status}`;
+    try { const j = await res.json(); msg = j.error?.message || msg; } catch {}
+    throw new Error(msg);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '', out = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    const lines = buf.split('\n');
+    buf = lines.pop();
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue;
+      const data = line.slice(6).trim();
+      if (data === '[DONE]') continue;
+      try {
+        const ev = JSON.parse(data);
+        if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') out += ev.delta.text;
+      } catch {}
+    }
+  }
+  if (!out.trim()) throw new Error('AIから応答が返りませんでした');
+  return _mvParseJson(out);
+}
+
+async function mvRunExtract() {
+  if (!_mvBase) { showToast('先に「表示する」でデータを読み込んでください', 'error'); return; }
+  const file = document.getElementById('mv-file')?.files?.[0];
+  if (!file) { showToast('スキャンファイルを選択してください', 'error'); return; }
+  const apiKey = localStorage.getItem('nippou_claude_apikey') || '';
+  if (!apiKey) { showToast('設定画面でClaude APIキーを登録してください', 'error'); return; }
+
+  const model  = document.getElementById('mv-model').value;
+  const rotate = document.getElementById('mv-rotate').value;
+  const split  = document.getElementById('mv-split').value;
+  document.getElementById('mv-map').innerHTML = '';
+  document.getElementById('mv-result').innerHTML = '';
+
+  try {
+    const pages = await _mvFileToPages(file, rotate, m => _mvStatus(m));
+    const blocks = [];
+    for (let pi = 0; pi < pages.length; pi++) {
+      _mvStatus(`AIで読み取り中... (${pi + 1}/${pages.length}ページ・1〜2分かかります)`);
+      const strips = _mvMakeStrips(pages[pi], split);
+      const json = await _mvCallApi(strips, model, apiKey);
+      for (const b of (json.blocks || [])) {
+        const cells = {};
+        for (const r of (b.rows || [])) {
+          const d = Number(r.d);
+          if (!Number.isInteger(d) || d < 1 || d > 31) continue;
+          cells[d] = { a: _mvNormSym(r.a), l: _mvNormSym(r.l), y: _mvNormSym(r.y) };
+        }
+        if (!Object.keys(cells).length && !String(b.name || '').trim()) continue;
+        blocks.push({
+          key: `p${pi + 1}b${b.i || blocks.length + 1}`,
+          page: pi + 1,
+          idx: Number(b.i) || 0,
+          name: String(b.name || '').trim(),
+          cells,
+          assigned: '',
+        });
+      }
+    }
+    if (!blocks.length) throw new Error('食数表の記入を読み取れませんでした。「送信画像を確認」で向きと範囲をご確認ください');
+    _mvBlocks = blocks;
+    _mvAutoAssign();
+    _mvStatus(`読み取り完了：${blocks.length}名分のブロックを検出しました`);
+    _mvRenderMapping();
+  } catch (e) {
+    _mvStatus(`エラー: ${e.message}`, true);
+  }
+}
+
+// --- 氏名の自動割り当て ---------------------------------------------------
+function _mvNormName(s) {
+  return String(s || '').replace(/[\s　・,，.。]/g, '');
+}
+
+function _mvAutoAssign() {
+  const residents = _mvBase.residents.slice();
+  const used = new Set();
+  // 完全一致・部分一致 → 先頭2文字一致 の順に確定させる
+  const passes = [
+    (p, r) => p === r,
+    (p, r) => p && r && (p.includes(r) || r.includes(p)),
+    (p, r) => p.length >= 2 && r.length >= 2 && p.slice(0, 2) === r.slice(0, 2),
+  ];
+  for (const test of passes) {
+    for (const blk of _mvBlocks) {
+      if (blk.assigned) continue;
+      const p = _mvNormName(blk.name);
+      if (!p) continue;
+      const hit = residents.find(r => !used.has(r) && test(p, _mvNormName(r)));
+      if (hit) { blk.assigned = hit; used.add(hit); }
+    }
+  }
+}
+
+function _mvRenderMapping() {
+  const div = document.getElementById('mv-map');
+  if (!div || !_mvBlocks) return;
+  const opts = name => ['<option value="">照合しない</option>']
+    .concat(_mvBase.residents.map(r =>
+      `<option value="${escHtml(r)}"${r === name ? ' selected' : ''}>${escHtml(r)}</option>`))
+    .join('');
+
+  const rows = _mvBlocks.map((b, i) => `
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">${b.page}ページ 左から${b.idx || (i + 1)}番目</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px">${b.name ? escHtml(b.name) : '<span style="color:#c62828">読取不能</span>'}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee">
+        <select class="form-select" style="margin:0;font-size:13px;padding:6px" onchange="_mvBlocks[${i}].assigned=this.value">${opts(b.assigned)}</select>
+      </td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;color:#888;white-space:nowrap">${Object.keys(b.cells).length}日分</td>
+    </tr>`).join('');
+
+  div.innerHTML = `
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">氏名の対応を確認</div>
+      <p style="font-size:12px;color:#666;margin:0 0 10px">手書き氏名から自動で当てはめました。誤りがあれば選び直してください。</p>
+      <div style="overflow-x:auto">
+        <table style="border-collapse:collapse;width:100%">
+          <thead><tr style="background:#f0f4fa">
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">紙の位置</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">読み取った氏名</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">照合する利用者</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">行数</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <button class="btn btn-primary" style="margin-top:12px" onclick="mvCompare()">この対応で照合する</button>
+    </div>
+  `;
+}
+
+// --- 照合 -----------------------------------------------------------------
+const MV_SLOTS = [['a', '朝'], ['l', '昼'], ['y', '夕']];
+
+function mvCompare() {
+  const res = document.getElementById('mv-result');
+  if (!_mvBase || !_mvBlocks) return;
+
+  const assigned = _mvBlocks.filter(b => b.assigned);
+  const dup = assigned.map(b => b.assigned).filter((v, i, a) => a.indexOf(v) !== i);
+  if (dup.length) {
+    res.innerHTML = `<div class="card" style="margin-top:12px;color:#c62828;font-size:13px">同じ利用者が複数のブロックに割り当てられています：${escHtml([...new Set(dup)].join('、'))}</div>`;
+    return;
+  }
+  if (!assigned.length) {
+    res.innerHTML = `<div class="card" style="margin-top:12px;color:#c62828;font-size:13px">照合する利用者を1名以上選んでください</div>`;
+    return;
+  }
+
+  const lastDay = _mvBase.lastDay;
+  const diffs = [];
+  const warns = [];
+  const tally = { match: 0, mismatch: 0, paperBlank: 0, dataBlank: 0, noReport: 0, skipped: 0, unread: 0, paperMissing: 0 };
+  const totals = [];
+
+  for (const blk of assigned) {
+    const name = blk.assigned;
+    const dataCells = _mvBase.cells[name] || {};
+    const cnt = { p: { '●': 0, '米': 0 }, d: { '●': 0, '米': 0 } };
+
+    // 読み取れなかった日が多いブロックは1行にまとめる（一覧が埋まるのを防ぐ）
+    const missing = [];
+    for (let day = 1; day <= lastDay; day++) if (!blk.cells[day]) missing.push(day);
+    const bulk = missing.length > 3;
+    if (bulk) warns.push(`${name}：${missing.length}日分（${missing[0]}日〜${missing[missing.length - 1]}日）の行を読み取れませんでした`);
+
+    for (let day = 1; day <= lastDay; day++) {
+      const paper = blk.cells[day];
+      const data  = dataCells[day] || { a: '', l: '', y: '', ra: false, ry: false };
+      for (const [k, label] of MV_SLOTS) {
+        const dv  = data[k];
+        const rec = (k === 'y') ? data.ry : data.ra;
+        if (dv === '●' || dv === '米') cnt.d[dv]++;
+
+        if (!paper) {
+          tally.paperMissing++;
+          if (!bulk) diffs.push({ day, name, label, paper: '行なし', data: dv || (rec ? '未入力' : '日報なし'), kind: '紙の行を読み取れず' });
+          continue;
+        }
+        const pv = paper[k];
+        if (pv === '●' || pv === '米') cnt.p[pv]++;
+
+        if (pv === '?') {
+          tally.unread++;
+          diffs.push({ day, name, label, paper: '判別不能', data: dv || (rec ? '未入力' : '日報なし'), kind: '紙が判別不能' });
+        } else if (pv === '' && dv === '') {
+          if (rec) tally.match++; else tally.skipped++;
+        } else if (pv === '') {
+          tally.paperBlank++;
+          diffs.push({ day, name, label, paper: '未記入', data: dv, kind: '紙が未記入' });
+        } else if (dv === '') {
+          if (rec) {
+            tally.dataBlank++;
+            diffs.push({ day, name, label, paper: pv, data: '未入力', kind: 'データが未入力' });
+          } else {
+            tally.noReport++;
+            diffs.push({ day, name, label, paper: pv, data: '日報なし', kind: '日報が未提出' });
+          }
+        } else if (pv === dv) {
+          tally.match++;
+        } else {
+          tally.mismatch++;
+          diffs.push({ day, name, label, paper: pv, data: dv, kind: '内容が不一致' });
+        }
+      }
+    }
+    totals.push({ name, cnt });
+  }
+
+  diffs.sort((x, y) => x.day - y.day || x.name.localeCompare(y.name));
+
+  const notMatched = _mvBase.residents.filter(r => !assigned.some(b => b.assigned === r));
+  const chip = (label, n, color) =>
+    `<div style="flex:1;min-width:96px;background:#fff;border:1px solid ${color}33;border-left:4px solid ${color};border-radius:6px;padding:8px 10px">
+       <div style="font-size:11px;color:#888">${label}</div>
+       <div style="font-size:18px;font-weight:700;color:${color}">${n}</div>
+     </div>`;
+
+  const totalTable = `
+    <table style="border-collapse:collapse;width:100%;margin-top:4px">
+      <thead><tr style="background:#f0f4fa">
+        <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">氏名</th>
+        <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">紙 ●</th>
+        <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">データ ●</th>
+        <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">紙 米</th>
+        <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">データ 米</th>
+      </tr></thead>
+      <tbody>${totals.map(t => {
+        const okA = t.cnt.p['●'] === t.cnt.d['●'];
+        const okR = t.cnt.p['米'] === t.cnt.d['米'];
+        const cell = (v, ok) => `<td style="padding:6px 8px;text-align:center;font-size:13px;border-bottom:1px solid #eee;${ok ? '' : 'color:#c62828;font-weight:700'}">${v}</td>`;
+        return `<tr>
+          <td style="padding:6px 8px;font-size:13px;border-bottom:1px solid #eee">${escHtml(t.name)}</td>
+          ${cell(t.cnt.p['●'], okA)}${cell(t.cnt.d['●'], okA)}${cell(t.cnt.p['米'], okR)}${cell(t.cnt.d['米'], okR)}
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+
+  const diffRows = diffs.map(d => `
+    <tr>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">${_mvBase.month}/${d.day}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px;white-space:nowrap">${escHtml(d.name)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px;text-align:center">${escHtml(d.label)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px;text-align:center">${escHtml(d.paper)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px;text-align:center">${escHtml(d.data)}</td>
+      <td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:12px;color:#c62828;white-space:nowrap">${escHtml(d.kind)}</td>
+    </tr>`).join('');
+
+  res.innerHTML = `
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">照合結果　${escHtml(_mvBase.homeName)}　${_mvBase.year}年${_mvBase.month}月</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        ${chip('一致', tally.match, '#2e7d32')}
+        ${chip('内容が不一致', tally.mismatch, '#c62828')}
+        ${chip('紙が未記入', tally.paperBlank, '#ef6c00')}
+        ${chip('データ未入力', tally.dataBlank + tally.noReport, '#6a1b9a')}
+        ${chip('紙を読めず', tally.unread + tally.paperMissing, '#00838f')}
+      </div>
+      ${diffs.length === 0 && !warns.length
+        ? '<div style="padding:14px;background:#e8f5e9;border-radius:8px;font-size:13px;color:#2e7d32;font-weight:700">紙とデータは完全に一致しました。目視確認は不要です。</div>'
+        : `<div style="padding:10px 12px;background:#fff8e1;border-radius:8px;font-size:12px;color:#8d6e00;line-height:1.7">
+             確認が必要なマスが <b>${diffs.length}件</b> あります。下の一覧のマスだけ紙で確認してください。
+             ${warns.length ? '<br>' + warns.map(w => '・' + escHtml(w)).join('<br>') : ''}
+           </div>`}
+      <div style="font-size:12px;font-weight:700;margin:16px 0 6px;color:var(--primary)">月合計の突き合わせ</div>
+      <div style="overflow-x:auto">${totalTable}</div>
+      ${notMatched.length ? `<div style="font-size:12px;color:#ef6c00;margin-top:10px">紙に見つからなかった利用者：${escHtml(notMatched.join('、'))}</div>` : ''}
+      <p style="font-size:11px;color:#aaa;margin:10px 0 0;line-height:1.6">
+        紙もデータも記入なし（日報未提出の日など）で照合対象外としたマス：${tally.skipped}件
+      </p>
+    </div>
+    ${diffs.length ? `
+    <div class="card" style="margin-top:12px">
+      <div class="card-title">要確認の一覧（${diffs.length}件）</div>
+      <div style="overflow-x:auto;max-height:70vh;overflow-y:auto">
+        <table style="border-collapse:collapse;width:100%">
+          <thead><tr style="background:#f0f4fa">
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">日付</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">氏名</th>
+            <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">食事</th>
+            <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">紙</th>
+            <th style="padding:6px 8px;font-size:11px;border-bottom:2px solid #bbb">データ</th>
+            <th style="padding:6px 8px;font-size:11px;text-align:left;border-bottom:2px solid #bbb">種別</th>
+          </tr></thead>
+          <tbody>${diffRows}</tbody>
+        </table>
+      </div>
+      <p style="font-size:11px;color:#aaa;margin:10px 0 0;line-height:1.6">
+        ※「紙が判別不能」はAIが読めなかったマスです。手書きを目視で確認してください。<br>
+        ※「日報が未提出」はその日の日報自体が登録されていないマスです。
+      </p>
+    </div>` : ''}
+  `;
 }
 
 </script>

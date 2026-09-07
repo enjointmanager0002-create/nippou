@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.09.02-1';
+const APP_VERSION = 'v2026.09.07-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1770,6 +1770,10 @@ async function getToken() {
     const res = await msalInstance.acquireTokenSilent({ scopes: CONFIG.scopes, account: state.account });
     return res.accessToken;
   } catch {
+    // トークン失効時のリダイレクトはページ全体を破棄する（＝入力中データが消える）。
+    // 破棄される前に必ず下書きを保存し、復帰後に自動復元できるよう目印を残す。
+    try { saveDraft(); } catch {}
+    try { sessionStorage.setItem('nippou_redirect_pending', '1'); } catch {}
     await msalInstance.acquireTokenRedirect({ scopes: CONFIG.scopes });
     return null;
   }
@@ -3655,7 +3659,7 @@ function clearDraft() { localStorage.removeItem('nippou_draft'); }
 
 function checkAndOfferDraftRestore() {
   const raw = localStorage.getItem('nippou_draft');
-  if (!raw) return;
+  if (!raw) { try { sessionStorage.removeItem('nippou_redirect_pending'); } catch {} return; }
   let draft;
   try { draft = JSON.parse(raw); } catch { clearDraft(); return; }
   const age = Date.now() - (draft.savedAt || 0);
@@ -3663,6 +3667,17 @@ function checkAndOfferDraftRestore() {
   if (age > 6 * 3600 * 1000 || draft.date !== today) { clearDraft(); return; }
   const hasData = draft.timeSlot || Object.keys(draft.residentData || {}).length;
   if (!hasData) return;
+  // トークン失効リダイレクトからの復帰時は、バナー任せにせず入力内容を自動復元する。
+  // （入力フォームは main 画面上にあるため、この時点で applyDraft すれば画面に即反映される）
+  let pending = false;
+  try { pending = sessionStorage.getItem('nippou_redirect_pending') === '1'; } catch {}
+  if (pending) {
+    try { sessionStorage.removeItem('nippou_redirect_pending'); } catch {}
+    showScreen('main');
+    applyDraft(draft);
+    showToast('通信が切れたため入力内容を自動復元しました。もう一度「送信する」を押してください。', 'success');
+    return;
+  }
   showDraftRestoreBanner(draft);
 }
 
@@ -4714,8 +4729,12 @@ async function saveEditRecord() {
     }
 
     await updateExcelRow(match.excelRow, rowData);
-    // キャッシュも更新
+    // 楽観的更新: 書き込み直後にGraphを再読込すると、まだ反映前の古いスナップショットが
+    // 返ることがある（結果整合性）。そのため編集内容をメモリ上のキャッシュへ直接反映し、
+    // 再描画は再読込に依存させない（＝「一度で保存されない」ように見える現象を防ぐ）。
+    match.values = rowData;
     _viewerRows = freshRows;
+    _allRowsCache = { rows: freshRows, expiresAt: Date.now() + _ALLROWS_TTL };
     showToast('保存しました', 'success');
     showScreen('viewer');
     await searchRecords();

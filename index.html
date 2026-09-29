@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.09.07-1';
+const APP_VERSION = 'v2026.09.29-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1819,17 +1819,21 @@ async function afterLogin() {
 // SharePoint/Graph側の一時的エラーは自動リトライする（サーバー混雑・タイムアウト対策）
 function _isTransientGraphError(msg) {
   const s = String(msg || '');
-  return /\((429|500|502|503|504)\)/.test(s)
+  return /\((423|429|500|502|503|504)\)/.test(s)   // 423=ブックのロック（同時書込競合）も再試行対象に追加
     || s.includes('MaxRequestDurationExceeded')
     || s.includes('GatewayTimeout')
     || s.includes('ServiceUnavailable')
     || s.includes('ActivityLimitReached')
+    || s.includes('resourceLocked')                 // 別端末が書込中でブックがロック
+    || s.includes('is currently locked')
+    || s.includes('currently being used')
+    || s.includes('ロック')
     || s.includes('制限時間内に要求を完了できません')
     || s.includes('通信がタイムアウト');
 }
 
 async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {}) {
-  const MAX_RETRY = 3;
+  const MAX_RETRY = 5; // 9時台の書込競合に耐えるため再試行回数を増やす
   let lastErr;
   for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
     state.token = await getToken();
@@ -1856,9 +1860,12 @@ async function callGraph(endpoint, method = 'GET', body = null, extraHeaders = {
       lastErr = (err.name === 'AbortError')
         ? new Error('通信がタイムアウトしました（90秒）。SharePointが混雑している可能性があります。')
         : err;
-      // 一時的エラーかつ再試行余地があればバックオフして再試行
+      // 一時的エラーかつ再試行余地があればバックオフして再試行。
+      // 指数的バックオフ＋ランダムなゆらぎ（jitter）で、9時台に複数端末が
+      // 同じ間隔で再試行して再び衝突するのを防ぐ。
       if (attempt < MAX_RETRY && _isTransientGraphError(lastErr.message)) {
-        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+        const base = 1200 * Math.pow(1.7, attempt); // 約1.2s→2.0s→3.5s→5.9s→10s
+        await new Promise(r => setTimeout(r, base + Math.random() * 800));
         continue;
       }
       throw lastErr;

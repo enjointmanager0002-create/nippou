@@ -6674,7 +6674,9 @@ function _parseFormsRows(type, rows) {
     if (!row[0] && !row[6]) continue;
     const id = String(row[0] || '');
     if (type === 'tokubetsuTeate') {
-      parsed.push({ _id: id, name: String(row[6]||'').trim(), type: String(row[7]||''), workDate: _fmtXlsxDate(row[8]), requestDate: _fmtXlsxDate(row[9]), home: String(row[10]||''), requesterName: String(row[11]||''), yearEndDate: _fmtXlsxDate(row[12]) });
+      // 列: G=名前 H=種類 I=代打日 J=代打依頼受け日 K=住居 L=依頼者 M=年末年始出勤日
+      //     N=長期休暇取得手当の最初勤務日 O=長期休暇代打手当の出勤日
+      parsed.push({ _id: id, name: String(row[6]||'').trim(), type: String(row[7]||''), workDate: _fmtXlsxDate(row[8]), requestDate: _fmtXlsxDate(row[9]), home: String(row[10]||''), requesterName: String(row[11]||''), yearEndDate: _fmtXlsxDate(row[12]), longLeaveDate: _fmtXlsxDate(row[13]), longLeaveDaihaDate: _fmtXlsxDate(row[14]) });
     } else if (type === 'tatekakin') {
       parsed.push({ _id: id, name: String(row[6]||'').trim(), date: _fmtXlsxDate(row[7]), amount: Number(row[8]||0), description: String(row[9]||'').trim() });
     } else if (type === 'sharyou') {
@@ -8048,10 +8050,14 @@ async function generateSrExcel() {
     const SR_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '齋':'斎', '齊':'斉', '邊':'辺', '邉':'辺', '濵':'浜', '桒':'桑' };
     const normN = s => String(s||'').replace(/[\s　]+/g,'').replace(/[髙﨑嵜齋齊邊邉濵桒]/g, c => SR_FOLD[c]).trim();
 
-    // 特別手当（workDate or yearEndDate が対象月）
+    // 特別手当（4種類とも対象月判定する）
+    // ・代打出勤手当 → workDate（代打日）
+    // ・年末年始手当 → yearEndDate（出勤日）
+    // ・長期休暇取得手当 → longLeaveDate（最初に勤務した日）
+    // ・長期休暇代打手当 → longLeaveDaihaDate（出勤日）
     const teateMap = {};
     for (const t of (formsData.tokubetsuTeate||[])) {
-      const d = t.workDate || t.yearEndDate;
+      const d = t.workDate || t.yearEndDate || t.longLeaveDate || t.longLeaveDaihaDate;
       if (!d?.startsWith(ymStr)) continue;
       const n = normN(t.name);
       teateMap[n] = (teateMap[n]||0) + _parseTeateAmount(t.type);

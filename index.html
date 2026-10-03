@@ -6966,6 +6966,7 @@ function _getCommute() {
   d.trainingWork   = d.trainingWork   || {};  // "date|正規化氏名" → 同日勤務の勤務地名（研修→勤務地に直行する日）
   d.attendDays     = d.attendDays     || {};  // ym → [{name, loc, days}]
   d.staffBase      = d.staffBase      || {};  // 正規化氏名 → 基本勤務地（勤務パターンに住居名がない職員用）
+  d.tsuinWork      = d.tsuinWork      || {};  // "正規化氏名|勤務パターン" → 勤務地名（通院同行複合日の勤務地・手動登録。基本勤務地とは分離）
   d.geoCache       = d.geoCache       || {};  // 住所 → [lat,lon] | null
   return d;
 }
@@ -7153,12 +7154,13 @@ async function handleCommuteAttendUpload(input) {
     // （勤務パターンの先頭トークン＝住居名。対面研修は別計算のため除外）
     const seen = new Set();
     const cnt = {};  // ym → `${name}|${loc}` → 日数
+    const manualKeys = {};  // ym → Set(`${name}|${loc}`)：住居名が取れない通院同行複合日＝必ず手動で勤務地登録
     for (let ri = 1; ri < rows.length; ri++) {
       const r = rows[ri];
       const name = String(r[iName] || '').trim();
       const dateRaw = String(r[iDate] || '').trim();
       const inTime = String(r[iIn] || '').trim();
-      const pat = String(r[iPat] || '').trim();
+      let pat = String(r[iPat] || '').trim();
       if (!name || !dateRaw || !inTime || !pat) continue;   // 出勤打刻のない行（休暇等）は対象外
       // 終日有休（全休）は実際に通勤していないため交通費の対象外。
       // 「勤怠申請」列が「全休」を含む行は、万一打刻が入っていても除外する
@@ -7168,6 +7170,17 @@ async function handleCommuteAttendUpload(input) {
       const apply = iApply >= 0 ? String(r[iApply] || '').trim() : '';
       if (apply.includes('全休')) continue;
       if (pat.includes('対面研修')) continue;                // 研修は対面研修の仕組みで別計算
+      // 通院同行は利用者ごとに通院先（病院）が異なり、別途交通費精算を行うため、
+      // 通院に伴う移動分はこの計算から除外する。
+      // ただし「通院同行＋夕朝勤務」等の複合日は、通院分だけを除き、
+      // 残った勤務部分（夕方勤務等）の通常通勤分はこれまで通り支給対象とする。
+      let tsuinCombined = false;
+      if (pat.includes('通院同行')) {
+        const rest = pat.split(/[＋+]/).filter(seg => !seg.includes('通院同行')).join(' ').trim();
+        if (!rest) continue;      // 純粋な通院同行日＝対象外
+        pat = rest;               // 複合日＝勤務部分のみで以降を判定
+        tsuinCombined = true;     // 住居名が無ければ基本勤務地で代替せず必ず手動登録に回す
+      }
       const loc = pat.split(/[\s　]+/)[0];
       if (!loc) continue;
       const dp = dateRaw.split('/');
@@ -7179,6 +7192,7 @@ async function handleCommuteAttendUpload(input) {
       seen.add(uk);
       const key = `${name}|${loc}`;
       (cnt[ym] = cnt[ym] || {})[key] = (cnt[ym][key] || 0) + 1;
+      if (tsuinCombined) (manualKeys[ym] = manualKeys[ym] || new Set()).add(key);
     }
 
     const months = Object.keys(cnt);
@@ -7188,7 +7202,9 @@ async function handleCommuteAttendUpload(input) {
     for (const ym of months) {
       d.attendDays[ym] = Object.entries(cnt[ym]).map(([k, days]) => {
         const [name, loc] = k.split('|');
-        return { name, loc, days };
+        // manual=true: 通院同行複合日で住居名が取れない勤務。基本勤務地での代替を禁止し手動登録必須。
+        const manual = !!(manualKeys[ym] && manualKeys[ym].has(k));
+        return { name, loc, days, manual };
       });
     }
     _setCommute(d);
@@ -7325,6 +7341,17 @@ function commuteSetStaffBase(norm, loc) {
   _renderCommutePreview();
 }
 
+// --- 通院同行複合日の勤務地を手動登録（パターン別。基本勤務地とは分離）---
+function commuteSetTsuinWork(norm, pat, loc) {
+  const d = _getCommute();
+  const key = `${norm}|${pat}`;
+  if (loc) d.tsuinWork[key] = loc;
+  else delete d.tsuinWork[key];
+  _setCommute(d);
+  showToast(loc ? `勤務地を「${loc}」に登録しました` : '勤務地の登録を解除しました', 'success');
+  _renderCommutePreview();
+}
+
 // --- 距離の手動登録 ---
 function commuteSaveDistance(inputEl) {
   const key = inputEl.dataset.key;
@@ -7374,14 +7401,26 @@ function _calcCommute(ym) {
         if (recN.includes(kn) || kn.includes(recN)) { locKey = k; break; }
       }
     }
-    // 住居名が取れないパターン（ﾌﾚｯｸｽ・通常勤務・看護師勤務等）→ 基本勤務地で代替
     if (!locKey) {
-      const base = d.staffBase[norm];
-      if (base) {
-        locKey = base;
+      if (rec.manual) {
+        // 通院同行複合日：通院先により実態がばらつくため基本勤務地では代替しない。
+        // パターン別に手動登録した勤務地（tsuinWork）があればそれを使い、無ければ手動登録に回す。
+        const tw = d.tsuinWork[`${norm}|${rec.loc}`];
+        if (tw) {
+          locKey = tw;
+        } else {
+          needBase.push({ disp: rec.name, norm, pat: rec.loc, days: rec.days, manual: true });
+          continue;
+        }
       } else {
-        needBase.push({ disp: rec.name, norm, pat: rec.loc, days: rec.days });
-        continue;
+        // 住居名が取れないパターン（ﾌﾚｯｸｽ・通常勤務・看護師勤務等）→ 基本勤務地で代替
+        const base = d.staffBase[norm];
+        if (base) {
+          locKey = base;
+        } else {
+          needBase.push({ disp: rec.name, norm, pat: rec.loc, days: rec.days });
+          continue;
+        }
       }
     }
     const dist = d.distances[`${norm}|${locKey}`];
@@ -7436,14 +7475,23 @@ function _calcCommute(ym) {
     perStaff[norm].fee = Math.min(raw, COMMUTE_CAP);       // 上限適用後の支給額
     perStaff[norm].capped = raw > COMMUTE_CAP;             // 上限に達したか（表示用）
   }
-  // 基本勤務地未設定は職員単位にまとめる
+  // 基本勤務地未設定（住居名なしの通常勤務）は職員単位にまとめる
   const needBaseMap = {};
+  // 通院同行複合日はパターン別（職員×勤務パターン）にまとめ、手動で勤務地を登録させる
+  const needManualMap = {};
   for (const nb of needBase) {
-    if (!needBaseMap[nb.norm]) needBaseMap[nb.norm] = { disp: nb.disp, norm: nb.norm, pats: [], days: 0 };
-    needBaseMap[nb.norm].pats.push(`${nb.pat}(${nb.days}日)`);
-    needBaseMap[nb.norm].days += nb.days;
+    if (nb.manual) {
+      const k = `${nb.norm}|${nb.pat}`;
+      if (!needManualMap[k]) needManualMap[k] = { disp: nb.disp, norm: nb.norm, pat: nb.pat, days: 0 };
+      needManualMap[k].days += nb.days;
+    } else {
+      if (!needBaseMap[nb.norm]) needBaseMap[nb.norm] = { disp: nb.disp, norm: nb.norm, pats: [], days: 0 };
+      needBaseMap[nb.norm].pats.push(`${nb.pat}(${nb.days}日)`);
+      needBaseMap[nb.norm].days += nb.days;
+    }
   }
-  return { perStaff, missing: Object.values(missingMap), unassigned, needBase: Object.values(needBaseMap) };
+  return { perStaff, missing: Object.values(missingMap), unassigned,
+           needBase: Object.values(needBaseMap), needManual: Object.values(needManualMap) };
 }
 
 // --- 距離の自動計算（Nominatim + OSRM。Pythonツールと同一ロジック）---
@@ -7641,10 +7689,26 @@ function _renderCommutePreview() {
     el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);padding:8px;text-align:center">対象月の勤怠項目別集計CSVをアップロードしてください</div>';
     return;
   }
-  const { perStaff, missing, unassigned, needBase } = _calcCommute(ym);
+  const { perStaff, missing, unassigned, needBase, needManual } = _calcCommute(ym);
 
   const TD = 'padding:4px 8px;border:1px solid #e0e0e0;font-size:12px';
   let html = '';
+
+  if (needManual && needManual.length) {
+    const locNames = Object.keys(d.locations);
+    html += `
+      <div style="font-size:12px;font-weight:700;color:#e65100;margin-bottom:4px">通院同行＋勤務の勤務地を登録（${needManual.length}件）— 通院分は対象外です。夕方勤務の勤務地を毎回手動で選択してください（基本勤務地は使いません）</div>
+      ${needManual.map(nm => `
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:4px;flex-wrap:wrap">
+          <span style="font-weight:600;min-width:90px">${escHtml(nm.disp)}</span>
+          <span style="color:var(--text-muted)">${escHtml(nm.pat)}(${nm.days}日)</span>
+          <select class="form-select" style="margin:0;width:auto;font-size:12px;padding:4px 8px" onchange="commuteSetTsuinWork('${escHtml(nm.norm)}', ${JSON.stringify(nm.pat).replace(/"/g, '&quot;')}, this.value)">
+            <option value="">勤務地を選択</option>
+            ${locNames.map(n => `<option value="${escHtml(n)}">${escHtml(n)}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      <div style="height:8px"></div>`;
+  }
 
   if (needBase.length) {
     const locNames = Object.keys(d.locations);
@@ -8029,8 +8093,8 @@ async function generateSrExcel() {
 
     // 交通費（勤怠項目別集計CSV＋対面研修から計算。未登録分は0のまま出力される）
     const commute = _calcCommute(ymStr);
-    if (commute.missing.length || commute.unassigned.length || commute.needBase.length) {
-      showToast(`交通費に未計算分があります（距離未登録${commute.missing.length}件・研修場所未割当${commute.unassigned.length}件・基本勤務地未設定${commute.needBase.length}名）。交通費計算カードで確認してください`, 'error');
+    if (commute.missing.length || commute.unassigned.length || commute.needBase.length || (commute.needManual && commute.needManual.length)) {
+      showToast(`交通費に未計算分があります（距離未登録${commute.missing.length}件・研修場所未割当${commute.unassigned.length}件・基本勤務地未設定${commute.needBase.length}名・通院同行の勤務地未登録${(commute.needManual||[]).length}件）。交通費計算カードで確認してください`, 'error');
     }
 
     const headerRow = ['個人コード', '氏　　名', '特別手当', '食事代', '立替精算分', '交通費'];

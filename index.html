@@ -8082,8 +8082,12 @@ async function generateSrExcel() {
       mealMap[sn] = (mealMap[sn]||0) + (slot === '早朝' ? 120 : 200);
     }
 
-    // 立替精算（tatekakin + sharyou自家用車スタッフのみ×交通費単価）
+    // 立替精算（tatekakin + sharyou自家用車×交通費単価）
     // 自家用車走行分の単価は交通費支給と揃える（COMMUTE_RATE=15円/km）
+    // 自家用車なら利用理由（スタッフのみ／入居者送迎）を問わず職員へ支給する
+    // （職員が自分の車を使った事実は理由によらず同じ。入居者送迎は入居者請求の
+    //  送迎代35円/kmとは支払先が異なる別勘定のため二重計上にはならない）。
+    // 社用車は会社の車のため対象外。
     const tatekaeMap = {};
     for (const t of (formsData.tatekakin||[])) {
       if (!t.date?.startsWith(ymStr)) continue;
@@ -8092,7 +8096,7 @@ async function generateSrExcel() {
     }
     for (const s of (formsData.sharyou||[])) {
       if (!s.date?.startsWith(ymStr)) continue;
-      if (s.reason !== 'スタッフのみ' || s.carType !== '自家用車') continue;
+      if (s.carType !== '自家用車') continue;
       const n = normN(s.name);
       tatekaeMap[n] = (tatekaeMap[n]||0) + (s.km||0) * COMMUTE_RATE;
     }

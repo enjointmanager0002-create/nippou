@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.09.29-1';
+const APP_VERSION = 'v2026.10.03-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -5039,12 +5039,14 @@ function renderUsageTable(days, residents, lookup, homeName, year, month) {
       const riyou = hasRecord ? calcRiyouStatus(g, h, i) : '';
 
       // 朝=早朝の食事内容、昼=早朝の昼食準備、夕=日中の食事内容
-      // 利用の有無が「有」の場合のみ食事マークを表示（外泊中日等は非表示）
-      const earlyRiyou = earlyRec ? String(earlyRec[VH['利用の有無']] || '') : '';
-      const dayRiyou   = dayRec   ? String(dayRec[VH['利用の有無']]   || '') : '';
-      const asa  = (earlyRec && earlyRiyou === '有') ? mealSymbol(String(earlyRec[VH['食事内容']] || '')) : '';
-      const hiru = (earlyRec && earlyRiyou === '有') ? mealSymbol(String(earlyRec[VH['昼食準備']] || '')) : '';
-      const yu   = (dayRec   && dayRiyou   === '有') ? mealSymbol(String(dayRec[VH['食事内容']]   || '')) : '';
+      // 食事マークは利用の有無に依らず、記録された食事内容そのものを反映する。
+      // （当日キャンセルの外泊など、利用なしでも食事を提供・請求する場合があり、
+      //  請求集計〔食事内容='提供あり'で計上〕と表示を一致させるため）
+      // 食事を提供していない日は食事内容が「提供なし」または空欄となり、
+      // mealSymbol が '' を返すのでマークは表示されない。
+      const asa  = earlyRec ? mealSymbol(String(earlyRec[VH['食事内容']] || '')) : '';
+      const hiru = earlyRec ? mealSymbol(String(earlyRec[VH['昼食準備']] || '')) : '';
+      const yu   = dayRec   ? mealSymbol(String(dayRec[VH['食事内容']]   || '')) : '';
 
       let riyouColor = '';
       if      (riyou === '宿泊')             riyouColor = 'color:#1565c0;font-weight:600';
@@ -7141,6 +7143,8 @@ async function handleCommuteAttendUpload(input) {
     const iDate = header.indexOf('日付');
     const iIn   = header.indexOf('出勤');
     const iPat  = header.indexOf('勤務パターン');
+    // 「勤怠申請」列（例: 有休/全休・有休/午前休・特別休暇/全休）。有休判定の正とする。
+    const iApply = header.findIndex(h => String(h || '').includes('勤怠申請'));
     if (iName < 0 || iDate < 0 || iIn < 0 || iPat < 0) {
       throw new Error('CSVの形式を認識できません。MF勤怠の「日次勤怠レポート」または「勤怠項目別集計」をアップロードしてください');
     }
@@ -7156,6 +7160,13 @@ async function handleCommuteAttendUpload(input) {
       const inTime = String(r[iIn] || '').trim();
       const pat = String(r[iPat] || '').trim();
       if (!name || !dateRaw || !inTime || !pat) continue;   // 出勤打刻のない行（休暇等）は対象外
+      // 終日有休（全休）は実際に通勤していないため交通費の対象外。
+      // 「勤怠申請」列が「全休」を含む行は、万一打刻が入っていても除外する
+      // （＝有休日に交通費が支給される事象を防ぐ）。
+      // 「午前休／午後休」等の半休は、実際に出勤・通勤していれば1日分を支給するため
+      // ここでは除外しない（打刻の有無で判定＝上の条件で処理済み）。
+      const apply = iApply >= 0 ? String(r[iApply] || '').trim() : '';
+      if (apply.includes('全休')) continue;
       if (pat.includes('対面研修')) continue;                // 研修は対面研修の仕組みで別計算
       const loc = pat.split(/[\s　]+/)[0];
       if (!loc) continue;

@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.10.03-1';
+const APP_VERSION = 'v2026.10.04-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -4937,15 +4937,26 @@ async function searchUsageReport() {
     const lastDay = new Date(y, m, 0).getDate();
     const to = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`;
 
+    const { homes } = getSettings();
+    const homeObj = (homes || []).find(h => h.name === homeName);
+    // この住居の現名簿（法人内転居に対応するため、絞り込み前に取得）
+    const rosterNames = homeObj
+      ? new Set((homeObj.residents || []).map(r => typeof r === 'string' ? r : r.name).filter(Boolean))
+      : null;
+
     const allRows = await readExcelAllRows();
     const rows = allRows.filter(r => {
       const d  = _toDateStr(r.values[VH['報告日']]);
+      if (d < from || d > to) return false;
       const hn = String(r.values[VH['ホーム名']] || '');
-      return d >= from && d <= to && hn === homeName;
+      if (hn === homeName) return true;
+      // 法人内転居対応: 現名簿に属する利用者は、転居前の他住居分も取り込む
+      // （食事状況等を転居前も含めて表示するため。現住居の記録を優先し、
+      //  他住居分は空き日付のみ埋める＝下のルックアップ構築で制御）
+      if (rosterNames && rosterNames.has(String(r.values[VH['利用者名']] || ''))) return true;
+      return false;
     });
 
-    const { homes } = getSettings();
-    const homeObj = (homes || []).find(h => h.name === homeName);
     // residentObjects: {name, kubuns}[]
     const residentObjects = homeObj
       ? (homeObj.residents || []).map(r => typeof r === 'string' ? { name: r, kubuns: [] } : r).filter(r => r.name)
@@ -4959,16 +4970,20 @@ async function searchUsageReport() {
     }
 
     // ルックアップ: date → slot → resident → values（重複は先着優先）
+    // 現住居の記録を優先し、転居前（他住居）の記録は空き枠のみ埋める。
+    // そのため「現住居の行→他住居の行」の2段階で投入する。
     const lookup = {};
-    for (const row of rows) {
+    const addToLookup = (row) => {
       const date = _toDateStr(row.values[VH['報告日']]);
       const slot = String(row.values[VH['時間帯']] || '');
       const name = String(row.values[VH['利用者名']] || '');
-      if (!date || !slot || !name) continue;
+      if (!date || !slot || !name) return;
       if (!lookup[date]) lookup[date] = {};
       if (!lookup[date][slot]) lookup[date][slot] = {};
       if (!lookup[date][slot][name]) lookup[date][slot][name] = row.values;
-    }
+    };
+    for (const row of rows) { if (String(row.values[VH['ホーム名']] || '') === homeName) addToLookup(row); }
+    for (const row of rows) { if (String(row.values[VH['ホーム名']] || '') !== homeName) addToLookup(row); }
 
     // 利用状況タブ
     stDiv.innerHTML = renderUsageTable(days, residents, lookup, homeName, y, m);

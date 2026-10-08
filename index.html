@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.10.04-1';
+const APP_VERSION = 'v2026.10.08-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -8125,7 +8125,8 @@ async function generateSrExcel() {
     const headerRow = ['個人コード', '氏　　名', '特別手当', '食事代', '立替精算分', '交通費'];
     const dataRows = staffList.map(staff => {
       const n = normN(staff.name);
-      return [staff.code||'', staff.name||'', teateMap[n]||0, mealMap[n]||0, tatekaeMap[n]||0, commute.perStaff[n]?.fee || 0];
+      // 立替精算分は自家用車走行分（km×15円）で小数が出るため、支給額は四捨五入して出力する
+      return [staff.code||'', staff.name||'', teateMap[n]||0, mealMap[n]||0, Math.round(tatekaeMap[n]||0), commute.perStaff[n]?.fee || 0];
     });
 
     const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows]);

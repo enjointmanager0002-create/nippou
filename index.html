@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.10.08-1';
+const APP_VERSION = 'v2026.10.30-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1796,6 +1796,11 @@ async function afterLogin() {
     if (!jumped) _restoreLastScreen(lastScreen);
     // 交通費設定もバックグラウンドで同期
     loadCommuteFromCloud().catch(() => {});
+    // 食材費配分設定・社労士スタッフ順序・請求書マスタも端末間で共有（バックグラウンド同期）
+    _loadJsonToLocalStorage('配分設定.json', 'nippou_budget_settings').catch(() => {});
+    _loadJsonToLocalStorage('スタッフ順序.json', INV_SR_KEY).catch(() => {});
+    _loadJsonToLocalStorage('請求書入居者.json', INV_RES_KEY).catch(() => {});
+    _loadJsonToLocalStorage('請求書設定.json', INV_SET_KEY).catch(() => {});
     // 設定のクラウド同期はバックグラウンドで実行（タイムアウトしてもUI表示を妨げない）
     loadSettingsFromCloud().then(() => {
       loadSettings();
@@ -2144,6 +2149,46 @@ async function saveSettingsToCloud(settings) {
     showToast('クラウドへの設定保存に失敗しました。ローカルには保存されています。', 'error');
     console.error('saveSettingsToCloud error:', e);
     return false;
+  }
+}
+
+// --- 汎用: 設定JSONをSharePointに保存／読込（端末間で共有するため）---
+// 配分設定・スタッフ順序など、端末ローカルのみだった管理設定を全端末で共有する。
+// 交通費設定と同じく、対象フォルダに1設定=1ファイルで保存する。
+async function _saveJsonToCloud(fileName, obj) {
+  try {
+    await initSharepointDrive();
+    const token = await getToken();
+    const bytes = new TextEncoder().encode(JSON.stringify(obj, null, 2));
+    const url = `https://graph.microsoft.com/v1.0` +
+      driveApi(`/root:/${CONFIG.excelFolderName}/${fileName}:/content`);
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: bytes,
+    });
+    if (!res.ok) throw new Error(`保存エラー: ${res.status}`);
+    return true;
+  } catch (e) {
+    console.warn(`${fileName} のクラウド保存に失敗（ローカルには保存済み）:`, e.message);
+    return false;
+  }
+}
+
+async function _loadJsonToLocalStorage(fileName, lsKey) {
+  try {
+    await initSharepointDrive();
+    const token = await getToken();
+    const url = `https://graph.microsoft.com/v1.0` +
+      driveApi(`/root:/${CONFIG.excelFolderName}/${fileName}:/content`);
+    const res = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
+    if (res.ok) {
+      const data = await res.json();
+      localStorage.setItem(lsKey, JSON.stringify(data));
+    }
+    // 404（初回・ファイル未作成）は無視してローカルをそのまま使う
+  } catch (e) {
+    console.warn(`${fileName} のクラウド読み込みをスキップ:`, e.message);
   }
 }
 
@@ -5259,6 +5304,8 @@ function saveBudgetSettings() {
   store[homeName] = data;
   localStorage.setItem('nippou_budget_settings', JSON.stringify(store));
   showToast(`${homeName}の配分設定を保存しました`, 'success');
+  // 端末間で共有するためクラウドにも保存（失敗してもローカルには保存済み）
+  _saveJsonToCloud('配分設定.json', store);
 }
 
 function showBudgetScreen() {
@@ -6114,7 +6161,10 @@ const INV_FRM_KEY = 'nippou_forms_data';
 const INV_SR_KEY  = 'nippou_sr_staff_order';
 
 function _getInvRes() { return JSON.parse(localStorage.getItem(INV_RES_KEY) || '[]'); }
-function _setInvRes(d) { localStorage.setItem(INV_RES_KEY, JSON.stringify(d)); }
+function _setInvRes(d) {
+  localStorage.setItem(INV_RES_KEY, JSON.stringify(d));
+  _saveJsonToCloud('請求書入居者.json', d);   // 端末間で共有
+}
 function _getInvSet() {
   const def = {
     invoiceNo: 1715,
@@ -6129,7 +6179,10 @@ function _getInvSet() {
   };
   return Object.assign({}, def, JSON.parse(localStorage.getItem(INV_SET_KEY) || '{}'));
 }
-function _setInvSet(d) { localStorage.setItem(INV_SET_KEY, JSON.stringify(d)); }
+function _setInvSet(d) {
+  localStorage.setItem(INV_SET_KEY, JSON.stringify(d));
+  _saveJsonToCloud('請求書設定.json', d);   // 端末間で共有
+}
 function _getFormsData() {
   return JSON.parse(localStorage.getItem(INV_FRM_KEY) ||
     '{"tokubetsuTeate":[],"tatekakin":[],"sharyou":[],"kashitsuke":[]}');
@@ -7198,16 +7251,32 @@ async function handleCommuteAttendUpload(input) {
         pat = rest;               // 複合日＝勤務部分のみで以降を判定
         tsuinCombined = true;     // 住居名が無ければ基本勤務地で代替せず必ず手動登録に回す
       }
+      // 「A 研修 + B 勤務」形式（会議Aの後に別住居Bで勤務へ直行する日）を判定。
+      // 例: '下豊岡Ⅱ 研修+筑縄 夕朝 13時' → 研修地A=下豊岡Ⅱ／勤務地B=筑縄。
+      // ＋（全角/半角）で区切られ、片方に「研修」・もう片方に住居名トークンがある場合のみ対象。
+      // loc は研修地A（trainSegの先頭）とし、勤務地B(workLocToken)を別途保持する。
+      // 旧形式（例 '筑縄 研修+夕朝'：勤務側に住居名がない）はB側が後段の計算で
+      // 住居に解決できず、通常通勤（研修地Aへの往復）にフォールバックする。
+      let workLocToken = '';
+      if (pat.includes('研修') && /[＋+]/.test(pat)) {
+        const segs = pat.split(/[＋+]/).map(s => s.trim()).filter(Boolean);
+        const trainSeg = segs.find(s => s.includes('研修'));
+        const otherSeg = segs.find(s => s && !s.includes('研修'));
+        if (trainSeg && otherSeg) {
+          const b = otherSeg.split(/[\s　]+/)[0];
+          if (b) { pat = trainSeg; workLocToken = b; }
+        }
+      }
       const loc = pat.split(/[\s　]+/)[0];
       if (!loc) continue;
       const dp = dateRaw.split('/');
       if (dp.length !== 3) continue;
       const date = `${dp[0]}-${dp[1].padStart(2, '0')}-${dp[2].padStart(2, '0')}`;
       const ym = date.slice(0, 7);
-      const uk = `${ym}|${_commuteNorm(name)}|${date}|${loc}`;
+      const uk = `${ym}|${_commuteNorm(name)}|${date}|${loc}|${workLocToken}`;
       if (seen.has(uk)) continue;
       seen.add(uk);
-      const key = `${name}|${loc}`;
+      const key = `${name}|${loc}|${workLocToken}`;
       (cnt[ym] = cnt[ym] || {})[key] = (cnt[ym][key] || 0) + 1;
       if (tsuinCombined) (manualKeys[ym] = manualKeys[ym] || new Set()).add(key);
     }
@@ -7218,10 +7287,11 @@ async function handleCommuteAttendUpload(input) {
     const d = _getCommute();
     for (const ym of months) {
       d.attendDays[ym] = Object.entries(cnt[ym]).map(([k, days]) => {
-        const [name, loc] = k.split('|');
+        const [name, loc, workLoc] = k.split('|');
         // manual=true: 通院同行複合日で住居名が取れない勤務。基本勤務地での代替を禁止し手動登録必須。
         const manual = !!(manualKeys[ym] && manualKeys[ym].has(k));
-        return { name, loc, days, manual };
+        // workLoc: 会議(研修)地Aの後に直行する別住居の勤務地B（A 研修+B 勤務 形式）
+        return { name, loc, days, manual, workLoc: workLoc || null };
       });
     }
     _setCommute(d);
@@ -7403,21 +7473,56 @@ function _calcCommute(ym) {
       };
     }
   };
+  // 場所間（住居A→住居B 等）の距離未登録を記録する
+  const addMissingPair = (placeA, placeB) => {
+    const key = `＠${placeA}|${placeB}`;
+    if (!missingMap[key]) {
+      missingMap[key] = {
+        disp: `${placeA} → ${placeB}`, place: '（場所間の距離）', key,
+        staffAddr: d.trainingPlaces[placeA] || d.locations[placeA] || '',
+        placeAddr: d.locations[placeB] || d.trainingPlaces[placeB] || '',
+      };
+    }
+  };
+  // 勤務パターンの住居名トークンを登録済み住居に解決（完全一致 → 部分一致）
+  const resolveHome = (locStr) => {
+    const recN = _commuteNorm(locStr);
+    for (const k of Object.keys(d.locations)) { if (_commuteNorm(k) === recN) return k; }
+    for (const k of Object.keys(d.locations)) {
+      const kn = _commuteNorm(k);
+      if (recN && (recN.includes(kn) || kn.includes(recN))) return k;
+    }
+    return null;
+  };
 
   // 通常の通勤（勤怠CSVより）
   const needBase = []; // 勤務パターンに住居名がなく、基本勤務地も未設定の職員
   for (const rec of (d.attendDays[ym] || [])) {
     const norm = _commuteNorm(rec.name);
-    // 住居名マッチ（完全一致 → 部分一致）
-    let locKey = null;
-    const recN = _commuteNorm(rec.loc);
-    for (const k of Object.keys(d.locations)) { if (_commuteNorm(k) === recN) { locKey = k; break; } }
-    if (!locKey) {
-      for (const k of Object.keys(d.locations)) {
-        const kn = _commuteNorm(k);
-        if (recN.includes(kn) || kn.includes(recN)) { locKey = k; break; }
+
+    // 会議(研修)地Aの後にそのまま別住居Bで勤務する直行日（A 研修+B 勤務 形式）。
+    // 実移動＝自宅→A→B→自宅 で計算する（通常の往復ではなく三角経路）。
+    // ※この形式は勤務Bが単一行に含まれ別途の通常通勤行が無いため、純増ではなく全経路を計上。
+    if (rec.workLoc) {
+      const aKey = resolveHome(rec.loc);
+      const bKey = resolveHome(rec.workLoc);
+      if (aKey && bKey && aKey !== bKey) {
+        const dHA = d.distances[`${norm}|${aKey}`];                                   // 自宅→A
+        const dHB = d.distances[`${norm}|${bKey}`];                                   // 自宅→B（＝B→自宅）
+        const dAB = d.distances[`＠${aKey}|${bKey}`] ?? d.distances[`＠${bKey}|${aKey}`]; // A→B（場所間）
+        let ok = true;
+        if (dHA == null) { addMissing(rec.name, norm, aKey); ok = false; }
+        if (dHB == null) { addMissing(rec.name, norm, bKey); ok = false; }
+        if (dAB == null) { addMissingPair(aKey, bKey); ok = false; }
+        if (!ok) continue;
+        addKm(norm, rec.name, rec.days * (dHA + dAB + dHB)); // 自宅→A→B→自宅
+        continue;
       }
+      // Bが住居として解決できない（旧形式 '○○ 研修+夕朝' 等）→ 通常通勤（Aへの往復）へフォールバック
     }
+
+    // 住居名マッチ（完全一致 → 部分一致）
+    let locKey = resolveHome(rec.loc);
     if (!locKey) {
       if (rec.manual) {
         // 通院同行複合日：通院先により実態がばらつくため基本勤務地では代替しない。
@@ -7445,20 +7550,10 @@ function _calcCommute(ym) {
     addKm(norm, rec.name, rec.days * dist * 2);
   }
 
-  // 対面研修
+  // 対面研修（シフトに「対面研修」を含む日／手動登録分。addMissingPairは上で定義済み）
   // ・研修のみの日: 自宅⇔研修場所の往復を加算
   // ・同日勤務あり（研修→勤務地に直行）: 実移動（自宅→研修→勤務地→自宅）から、
   //   通常の通勤計算に含まれる自宅⇔勤務地往復を差し引いた純増分を加算
-  const addMissingPair = (placeA, placeB) => {
-    const key = `＠${placeA}|${placeB}`;
-    if (!missingMap[key]) {
-      missingMap[key] = {
-        disp: `${placeA} → ${placeB}`, place: '（場所間の距離）', key,
-        staffAddr: d.trainingPlaces[placeA] || d.locations[placeA] || '',
-        placeAddr: d.locations[placeB] || d.trainingPlaces[placeB] || '',
-      };
-    }
-  };
   for (const t of (d.trainingDays[ym] || [])) {
     const norm = _commuteNorm(t.name);
     const key = `${t.date}|${norm}`;
@@ -7994,6 +8089,8 @@ function saveSrStaff() {
   }
   _setSrStaff(staff);
   showToast('スタッフ順序を保存しました', 'success');
+  // 端末間で共有するためクラウドにも保存（失敗してもローカルには保存済み）
+  _saveJsonToCloud('スタッフ順序.json', staff);
 }
 
 async function handleSrStaffCsvUpload(input) {
@@ -8038,6 +8135,8 @@ async function handleSrStaffCsvUpload(input) {
     _setSrStaff(staff);
     _renderSrStaff();
     showToast(`スタッフ順序を登録しました（${staff.length}名）`, 'success');
+    // 端末間で共有するためクラウドにも保存
+    _saveJsonToCloud('スタッフ順序.json', staff);
   } catch (e) {
     showToast(`CSV読み込みエラー: ${e.message}`, 'error');
     console.error(e);

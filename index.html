@@ -1540,7 +1540,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.10.30-1';
+const APP_VERSION = 'v2026.10.31-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -7161,6 +7161,66 @@ async function handleCommuteDistUpload(input) {
   input.value = '';
 }
 
+// --- 現状マスタのダウンロード（取込と同じ形式で書き出し＝編集して再取込できる）---
+function downloadCommuteAddressMaster() {
+  if (!window.XLSX) { showToast('SheetJSが読み込めていません。再読み込みしてください', 'error'); return; }
+  const d = _getCommute();
+  // 職員マスタ: 個人コード・氏名・住所（コード順）
+  const staffRows = [['個人コード', '氏名', '住所']];
+  Object.values(d.staffAddr)
+    .sort((a, b) => (a.code ?? 999999) - (b.code ?? 999999))
+    .forEach(s => staffRows.push([s.code ?? '', s.disp || '', s.addr || '']));
+  // 勤務地マスタ: 勤務地名・住所
+  const locRows = [['勤務地名', '住所']];
+  Object.entries(d.locations).forEach(([name, addr]) => locRows.push([name, addr || '']));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(staffRows), '職員マスタ');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(locRows), '勤務地マスタ');
+  XLSX.writeFile(wb, `住所マスタ_現状_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  showToast('住所マスタ（現状）をダウンロードしました', 'success');
+}
+
+function downloadCommuteDistMaster() {
+  if (!window.XLSX) { showToast('SheetJSが読み込めていません。再読み込みしてください', 'error'); return; }
+  const d = _getCommute();
+  const locNames = Object.keys(d.locations);
+  // 「片道距離(km)」: 職員名・自宅住所・（勤務地ごとの片道km）
+  const header = ['職員名', '自宅住所', ...locNames];
+  const rows = [header];
+  const seenNorm = new Set();
+  Object.values(d.staffAddr)
+    .sort((a, b) => (a.code ?? 999999) - (b.code ?? 999999))
+    .forEach(s => {
+      const norm = _commuteNorm(s.disp);
+      seenNorm.add(norm);
+      const row = [s.disp || '', s.addr || ''];
+      for (const loc of locNames) {
+        const km = d.distances[`${norm}|${loc}`];
+        row.push(km == null ? '' : km);
+      }
+      rows.push(row);
+    });
+  // 職員マスタに無い氏名で距離だけ登録されている分も取りこぼさない（＠場所間距離は除外）
+  const orphan = new Set();
+  Object.keys(d.distances).forEach(k => {
+    if (k.startsWith('＠')) return;
+    const nm = k.split('|')[0];
+    if (nm && !seenNorm.has(nm)) orphan.add(nm);
+  });
+  orphan.forEach(nm => {
+    const row = [nm, ''];
+    for (const loc of locNames) {
+      const km = d.distances[`${nm}|${loc}`];
+      row.push(km == null ? '' : km);
+    }
+    rows.push(row);
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), '片道距離(km)');
+  XLSX.writeFile(wb, `距離マスタ_現状_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  showToast('距離マスタ（現状）をダウンロードしました', 'success');
+}
+
 // --- MF勤怠CSV → 住居別出勤日数（日次勤怠レポート／勤怠項目別集計の両形式に対応） ---
 async function handleCommuteAttendUpload(input) {
   const file = input.files[0];
@@ -7709,6 +7769,15 @@ function _renderCommuteArea() {
           <input type="file" accept=".xlsx" style="display:none" onchange="handleCommuteDistUpload(this)">
         </label>
         <div style="font-size:11px;color:var(--text-muted)">通勤距離計算フォルダの「②マスタ・設定」にあるファイルをそのまま取込めます。再取込すると上書き更新されます。</div>
+      </div>
+    </details>
+
+    <details style="margin-bottom:10px">
+      <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--primary)">現状データをダウンロード</summary>
+      <div style="padding:8px 0;display:grid;gap:8px">
+        <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="downloadCommuteAddressMaster()">住所マスタ（現状）をダウンロード</button>
+        <button class="btn btn-secondary" style="width:auto;padding:6px 14px;font-size:12px" onclick="downloadCommuteDistMaster()">距離マスタ（現状）をダウンロード</button>
+        <div style="font-size:11px;color:var(--text-muted)">現在システムに登録されている内容を、取込と同じ形式のExcelで書き出します。編集して再取込すれば上書き更新できます。</div>
       </div>
     </details>
 

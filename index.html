@@ -1554,7 +1554,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.11.09-1';
+const APP_VERSION = 'v2026.11.09-2';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -6284,6 +6284,15 @@ function _utilMemoFor(resident) {
   return seed ? { water:seed.water, elec:seed.elec, gas:seed.gas, note:seed.note } : { water:'', elec:'', gas:'', note:'' };
 }
 
+// 光熱費管理の対象判定。種別タグに依存せず、住居名や既知のサテライト利用者名でも拾う
+// （群馬管轄など種別が「サテライト」で登録されていない利用者も編集・請求反映できるようにする）
+function _isUtilTarget(r) {
+  if (!r) return false;
+  return r.type === 'サテライト'
+    || String(r.home || '').includes('サテライト')
+    || !!UTIL_SEED[_utilNormName(r.name)];
+}
+
 function _utilAmtKey(id, ym) { return `${id}|${ym}`; }
 
 function _renderUtilityTab() {
@@ -6297,9 +6306,9 @@ function _renderUtilityTab() {
     if (monthEl) monthEl.value = ym;
   }
   const [yy, mm] = ym.split('-').map(Number);
-  const residents = _getInvRes().filter(r => r.type === 'サテライト' && r.name);
+  const residents = _getInvRes().filter(r => r.name && _isUtilTarget(r));
   if (!residents.length) {
-    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">サテライト種別の入居者が登録されていません。「入居者情報」タブで種別を「サテライト」にして登録してください。</div>';
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">サテライト入居者が登録されていません。「入居者情報」タブで登録してください（種別「サテライト」または住居名に「サテライト」を含む利用者が対象です）。</div>';
     return;
   }
   // 管轄ごとにグループ化（高崎 → 群馬）
@@ -7119,7 +7128,7 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
     items.push({ name: '家賃', price: resident.rent, qty: 1, amount: resident.rent });
   }
   // 光熱費
-  if (resident.type === 'サテライト') {
+  if (_isUtilTarget(resident)) {
     // サテライトは「光熱費」タブで入力した月次の水道/電気/ガスを個別行で出力
     const u = _getUtil();
     const rec = u.amt[`${resident.id}|${year}-${String(month).padStart(2,'0')}`] || {};

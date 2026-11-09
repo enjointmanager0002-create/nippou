@@ -1408,6 +1408,7 @@
       <button id="invoice-tabbt-residents" class="invoice-tabbt active" onclick="showInvoiceTab('residents')">入居者情報</button>
       <button id="invoice-tabbt-forms" class="invoice-tabbt" onclick="showInvoiceTab('forms')">Formsデータ</button>
       <button id="invoice-tabbt-invoice" class="invoice-tabbt" onclick="showInvoiceTab('invoice')">請求書CSV</button>
+      <button id="invoice-tabbt-utility" class="invoice-tabbt" onclick="showInvoiceTab('utility')">光熱費</button>
       <button id="invoice-tabbt-sr" class="invoice-tabbt" onclick="showInvoiceTab('sr')">社労士シート</button>
     </div>
 
@@ -1461,6 +1462,19 @@
         <button class="btn btn-primary" onclick="generateInvoiceCsv()">CSVを作成・ダウンロード</button>
         <div id="inv-csv-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
       </div>
+    </div>
+
+    <!-- 光熱費管理タブ（サテライト） -->
+    <div id="invoice-tab-utility" class="hidden" style="padding:12px">
+      <div class="card">
+        <div class="card-title">サテライト住居 水道光熱費管理</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">各住居の問い合わせ方法を見ながら水道・電気・ガスを調べ、該当月の欄に入力してください。入力値はその月の請求書CSVにサテライト入居者の「水道代／電気代／ガス代」として自動反映されます。水道が隔月（奇数月など）の場合は空欄のままでOKです。</div>
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:end;margin-bottom:6px">
+          <div><label class="form-label">対象月（実績月）</label><input type="month" id="util-month" class="form-input" style="margin:0" onchange="_renderUtilityTab()"></div>
+          <div id="util-save-status" style="font-size:12px;color:var(--text-muted);padding-bottom:8px"></div>
+        </div>
+      </div>
+      <div id="util-list" style="margin-top:12px"></div>
     </div>
 
     <!-- 社労士シートタブ -->
@@ -1540,7 +1554,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.11.04-1';
+const APP_VERSION = 'v2026.11.09-1';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -1801,6 +1815,7 @@ async function afterLogin() {
     _loadJsonToLocalStorage('スタッフ順序.json', INV_SR_KEY).catch(() => {});
     _loadJsonToLocalStorage('請求書入居者.json', INV_RES_KEY).catch(() => {});
     _loadJsonToLocalStorage('請求書設定.json', INV_SET_KEY).catch(() => {});
+    _loadJsonToLocalStorage('光熱費.json', UTIL_KEY).catch(() => {});
     // 設定のクラウド同期はバックグラウンドで実行（タイムアウトしてもUI表示を妨げない）
     loadSettingsFromCloud().then(() => {
       loadSettings();
@@ -6229,6 +6244,156 @@ function _setFormsData(d) { localStorage.setItem(INV_FRM_KEY, JSON.stringify(d))
 function _getSrStaff() { return JSON.parse(localStorage.getItem(INV_SR_KEY) || '[]'); }
 function _setSrStaff(d) { localStorage.setItem(INV_SR_KEY, JSON.stringify(d)); }
 
+// ---------- サテライト 水道光熱費 ----------
+const UTIL_KEY = 'nippou_utility';
+// data: { memo:{ [residentId]:{water,elec,gas,note} }, amt:{ ["id|YYYY-MM"]:{water,elec,gas} } }
+function _getUtil() {
+  const d = JSON.parse(localStorage.getItem(UTIL_KEY) || '{}');
+  d.memo = d.memo || {};
+  d.amt  = d.amt  || {};
+  return d;
+}
+function _setUtil(d, { toCloud = true } = {}) {
+  localStorage.setItem(UTIL_KEY, JSON.stringify(d));
+  if (toCloud) _saveJsonToCloud('光熱費.json', d); // 端末間で共有（非公開SharePoint）
+}
+
+// 問い合わせ方法メモの初期値。
+// ※このindex.htmlは公開GitHub Pagesに掲載されるため、ソースにはログインID/パスワードを一切書かない。
+//   ID/PASSは利用者が各メモ欄に手入力し、非公開SharePoint（光熱費.json）に保存する運用。
+const _UTIL_NAME_FOLD = { '髙':'高', '﨑':'崎', '嵜':'崎', '櫻':'桜', '眞':'真', '濱':'浜', '濵':'浜' };
+function _utilNormName(s) {
+  return String(s || '').replace(/[\s　]+/g, '').replace(/[髙﨑嵜櫻眞濱濵]/g, c => _UTIL_NAME_FOLD[c]).trim();
+}
+const _TEPCO = '東京電力（クレカ・TEPCO web）／WEBで確認\n（ログインID・パスワードをこの欄に追記して保存してください）';
+const UTIL_SEED = {
+  '丸茂春江': { water:'玉村町水道（口座引落）／2ヶ月に1回 玉村水道局 0270-65-6691 へ問い合わせ', elec:_TEPCO, gas:'大和屋（振込）0270-65-3798 ／毎月問い合わせ', note:'サテ玉村A（ROSAハイツA 102号室）' },
+  '立石力':   { water:'玉村町水道（口座引落）／2ヶ月に1回 玉村水道局 0270-65-6691', elec:_TEPCO, gas:'原野屋住宅総合設備（現金・引落不可）0270-65-2903 ／毎月問い合わせ', note:'サテ玉村B（ROSAハイツB 110号室）' },
+  '佐藤由紀': { water:'伊勢崎市水道（口座引落）／2ヶ月に1回 伊勢崎水道局 0270-30-1230', elec:_TEPCO + '\n※本人支払いの月あり', gas:'伊勢崎ガス（未契約）0270-25-4520', note:'サテ山王A（県営山王団地 77-F136）' },
+  '大谷真紀': { water:'伊勢崎市水道（口座引落）／2ヶ月に1回 伊勢崎水道局 0270-30-1230', elec:_TEPCO, gas:'伊勢崎ガス（現金）0270-25-4520', note:'サテ山王B（県営山王団地 79-H207）' },
+  '林勝己':   { water:'高崎市水道（口座引落）／2ヶ月に1回 高崎水道局 027-321-1283（登録電話番号で照会）', elec:_TEPCO, gas:'株式会社ザ・トーカイ（振込）トーカイ 027-251-0701\nお客様番号: 78301401279\n連絡先: 080-6817-0821 ／毎月問い合わせ', note:"サテ南大類（R'ZOOアパート 105号室）" },
+  '高橋潤':   { water:'高崎市水道（口座引落）／2ヶ月に1回 高崎水道局 027-321-1283', elec:_TEPCO, gas:'ニチガス（現金）027-372-1370\nお客様番号: 3856655\nマイニチガスアプリで確認（アプリ登録済み）／毎月問い合わせ', note:'サテ浜尻（松本コーポ 101号室）' },
+  '田口麻美': { water:'高崎市水道（口座引落）／2ヶ月に1回 高崎水道局 027-321-1283', elec:_TEPCO, gas:'河原実業（旧 有限会社小池）（振込）／川原実業マイページでWEB確認\n（ログインID・パスワードをこの欄に追記して保存してください）', note:'サテ高関（KHドーム A102号室）' },
+  '櫻井友子': { water:'高崎市水道（口座引落）／2ヶ月に1回 高崎水道局 027-321-1283', elec:'（契約情報未登録）', gas:'ジーエスガス 027-386-6652（これまでは利用者契約）', note:'サテ鼻高（高崎市鼻高町41-8）※管理表では現状ほぼ「ー」' },
+};
+// 保存済みメモがあればそれを、無ければ氏名でシードを返す
+function _utilMemoFor(resident) {
+  const u = _getUtil();
+  if (u.memo[resident.id]) return u.memo[resident.id];
+  const seed = UTIL_SEED[_utilNormName(resident.name)];
+  return seed ? { water:seed.water, elec:seed.elec, gas:seed.gas, note:seed.note } : { water:'', elec:'', gas:'', note:'' };
+}
+
+function _utilAmtKey(id, ym) { return `${id}|${ym}`; }
+
+function _renderUtilityTab() {
+  const el = document.getElementById('util-list');
+  if (!el) return;
+  const monthEl = document.getElementById('util-month');
+  let ym = monthEl?.value;
+  if (!ym) {
+    const now = new Date();
+    ym = _prevMonthOf(`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`);
+    if (monthEl) monthEl.value = ym;
+  }
+  const [yy, mm] = ym.split('-').map(Number);
+  const residents = _getInvRes().filter(r => r.type === 'サテライト' && r.name);
+  if (!residents.length) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">サテライト種別の入居者が登録されていません。「入居者情報」タブで種別を「サテライト」にして登録してください。</div>';
+    return;
+  }
+  // 管轄ごとにグループ化（高崎 → 群馬）
+  const groups = { '高崎管轄': [], '群馬管轄': [] };
+  for (const r of residents) {
+    (_invMatchesJurisdiction(r.home, '高崎管轄') ? groups['高崎管轄'] : groups['群馬管轄']).push(r);
+  }
+  const u = _getUtil();
+  const esc = escHtml;
+  const cardHtml = r => {
+    const memo = _utilMemoFor(r);
+    const rec = u.amt[_utilAmtKey(r.id, ym)] || {};
+    const w = rec.water ?? '', e = rec.elec ?? '', g = rec.gas ?? '';
+    const total = (Number(w)||0) + (Number(e)||0) + (Number(g)||0);
+    const memoRow = (label, key, val, color) => `
+      <div style="margin-bottom:6px">
+        <div style="font-size:11px;font-weight:700;color:${color};margin-bottom:2px">${label}</div>
+        <textarea id="util-memo-${key}-${r.id}" rows="3" onchange="_utilSaveMemo('${r.id}')"
+          style="width:100%;font-size:12px;padding:6px;border:1px solid var(--border);border-radius:6px;resize:vertical;box-sizing:border-box">${esc(val)}</textarea>
+      </div>`;
+    const amtInput = (label, key, val, color) => `
+      <div>
+        <label class="form-label" style="color:${color}">${label}（円）</label>
+        <input type="number" id="util-amt-${key}-${r.id}" value="${val===''?'':Number(val)}" placeholder="空欄=請求なし"
+          class="form-input" style="margin:0" onchange="_utilSaveAmt('${r.id}')">
+      </div>`;
+    return `
+      <div style="border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;background:#fff">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+          <div style="font-size:14px;font-weight:700">${esc(r.name)} <span style="font-size:11px;font-weight:400;color:var(--text-muted)">${esc(r.home||'')}</span></div>
+          <div style="font-size:12px;color:var(--text-muted)">${esc(memo.note||'')}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+          ${amtInput('水道代','water',w,'#0277bd')}
+          ${amtInput('電気代','elec',e,'#ef6c00')}
+          ${amtInput('ガス代','gas',g,'#c62828')}
+        </div>
+        <div style="text-align:right;font-size:12px;margin-top:4px">合計: <b id="util-total-${r.id}">${total.toLocaleString()}</b> 円</div>
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700">問い合わせ方法・契約情報（クリックで開閉／編集可）</summary>
+          <div style="margin-top:8px;padding:8px;background:#fafafa;border-radius:6px">
+            ${memoRow('水道','water',memo.water,'#0277bd')}
+            ${memoRow('電気','elec',memo.elec,'#ef6c00')}
+            ${memoRow('ガス','gas',memo.gas,'#c62828')}
+            ${memoRow('備考（部屋番号・住所等）','note',memo.note,'#555')}
+            <div style="font-size:10px;color:#c62828;margin-top:2px">※ID・パスワードはこの欄に入力・保存されます（保存先は非公開SharePoint）。ソースコードには保存されません。</div>
+          </div>
+        </details>
+      </div>`;
+  };
+  el.innerHTML = Object.entries(groups).filter(([,list]) => list.length).map(([jur, list]) => `
+    <div style="margin-bottom:14px">
+      <div style="font-size:13px;font-weight:700;color:var(--primary);padding:4px 0;border-bottom:2px solid var(--border);margin-bottom:8px">${jur}（${yy}年${mm}月）</div>
+      ${list.map(cardHtml).join('')}
+    </div>
+  `).join('');
+}
+
+function _utilFlashStatus(msg) {
+  const s = document.getElementById('util-save-status');
+  if (!s) return;
+  s.textContent = msg;
+  s.style.color = '#2e7d32';
+  clearTimeout(_utilFlashStatus._t);
+  _utilFlashStatus._t = setTimeout(() => { s.textContent = ''; }, 2500);
+}
+
+function _utilSaveMemo(id) {
+  const gv = k => document.getElementById(`util-memo-${k}-${id}`)?.value ?? '';
+  const u = _getUtil();
+  u.memo[id] = { water: gv('water'), elec: gv('elec'), gas: gv('gas'), note: gv('note') };
+  _setUtil(u);
+  _utilFlashStatus('問い合わせメモを保存しました');
+}
+
+function _utilSaveAmt(id) {
+  const ym = document.getElementById('util-month')?.value;
+  if (!ym) return;
+  const gv = k => {
+    const v = document.getElementById(`util-amt-${k}-${id}`)?.value ?? '';
+    return v === '' ? '' : (Number(v) || 0);
+  };
+  const u = _getUtil();
+  const rec = { water: gv('water'), elec: gv('elec'), gas: gv('gas') };
+  const key = _utilAmtKey(id, ym);
+  if (rec.water === '' && rec.elec === '' && rec.gas === '') delete u.amt[key];
+  else u.amt[key] = rec;
+  _setUtil(u);
+  const total = (Number(rec.water)||0) + (Number(rec.elec)||0) + (Number(rec.gas)||0);
+  const t = document.getElementById(`util-total-${id}`);
+  if (t) t.textContent = total.toLocaleString();
+  _utilFlashStatus('金額を保存しました');
+}
+
 let _invEditingId = null;
 
 function _prevMonthOf(ym) {
@@ -6252,18 +6417,21 @@ function showInvoiceScreen() {
   if (dataEl && !dataEl.value && csvEl?.value) dataEl.value = _prevMonthOf(csvEl.value);
   const srEl = document.getElementById('inv-sr-month');
   if (srEl && !srEl.value) srEl.value = ym;
+  const utilEl = document.getElementById('util-month');
+  if (utilEl && !utilEl.value) utilEl.value = _prevMonthOf(ym);
   _loadInvCsvSettings();
   showScreen('invoice');
   showInvoiceTab('residents');
 }
 
 function showInvoiceTab(tab) {
-  ['residents','forms','invoice','sr'].forEach(t => {
+  ['residents','forms','invoice','utility','sr'].forEach(t => {
     document.getElementById(`invoice-tab-${t}`)?.classList.toggle('hidden', t !== tab);
     document.getElementById(`invoice-tabbt-${t}`)?.classList.toggle('active', t === tab);
   });
   if (tab === 'residents') _renderInvResidents();
   if (tab === 'forms')     _renderInvForms();
+  if (tab === 'utility')   _renderUtilityTab();
   if (tab === 'sr')        { _renderSrStaff(); _renderCommuteArea(); }
 }
 
@@ -6951,7 +7119,17 @@ function _buildInvItems(resident, year, month, monthRows, formsData) {
     items.push({ name: '家賃', price: resident.rent, qty: 1, amount: resident.rent });
   }
   // 光熱費
-  if (resident.utility > 0) items.push({ name: '光熱費', price: resident.utility, qty: 1, amount: resident.utility });
+  if (resident.type === 'サテライト') {
+    // サテライトは「光熱費」タブで入力した月次の水道/電気/ガスを個別行で出力
+    const u = _getUtil();
+    const rec = u.amt[`${resident.id}|${year}-${String(month).padStart(2,'0')}`] || {};
+    const w = Number(rec.water)||0, e = Number(rec.elec)||0, g = Number(rec.gas)||0;
+    if (w > 0) items.push({ name:'水道代', price:w, qty:1, amount:w });
+    if (e > 0) items.push({ name:'電気代', price:e, qty:1, amount:e });
+    if (g > 0) items.push({ name:'ガス代', price:g, qty:1, amount:g });
+  } else if (resident.utility > 0) {
+    items.push({ name: '光熱費', price: resident.utility, qty: 1, amount: resident.utility });
+  }
   // 日用品費
   if (resident.supplies > 0) items.push({ name: '日用品費', price: resident.supplies, qty: 1, amount: resident.supplies });
   // 金銭管理料

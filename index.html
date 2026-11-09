@@ -1554,7 +1554,7 @@
 // CONFIGURATION — AzureアプリIDをここに設定
 // ==============================
 // アプリのバージョン（更新のたびに日付+連番を上げる。キャッシュ問題の切り分け用）
-const APP_VERSION = 'v2026.11.09-2';
+const APP_VERSION = 'v2026.11.09-3';
 
 const CONFIG = {
   // Azure App Registration の「アプリケーション (クライアント) ID」を入力してください
@@ -6346,7 +6346,10 @@ function _renderUtilityTab() {
           ${amtInput('電気代','elec',e,'#ef6c00')}
           ${amtInput('ガス代','gas',g,'#c62828')}
         </div>
-        <div style="text-align:right;font-size:12px;margin-top:4px">合計: <b id="util-total-${r.id}">${total.toLocaleString()}</b> 円</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">
+          <button id="util-savebtn-${r.id}" class="btn btn-primary" style="width:auto;padding:7px 24px;font-size:14px" onclick="_utilSaveCard('${r.id}', this)">保存</button>
+          <div style="font-size:13px">合計: <b id="util-total-${r.id}">${total.toLocaleString()}</b> 円</div>
+        </div>
         <details style="margin-top:8px">
           <summary style="cursor:pointer;font-size:12px;color:var(--primary);font-weight:700">問い合わせ方法・契約情報（クリックで開閉／編集可）</summary>
           <div style="margin-top:8px;padding:8px;background:#fafafa;border-radius:6px">
@@ -6401,6 +6404,36 @@ function _utilSaveAmt(id) {
   const t = document.getElementById(`util-total-${id}`);
   if (t) t.textContent = total.toLocaleString();
   _utilFlashStatus('金額を保存しました');
+}
+
+// 保存ボタン：金額とメモをまとめて保存し、ボタン上に明確な確認を出す
+function _utilSaveCard(id, btn) {
+  const ym = document.getElementById('util-month')?.value;
+  const u = _getUtil();
+  // 金額
+  if (ym) {
+    const ga = k => { const v = document.getElementById(`util-amt-${k}-${id}`)?.value ?? ''; return v === '' ? '' : (Number(v) || 0); };
+    const rec = { water: ga('water'), elec: ga('elec'), gas: ga('gas') };
+    const key = _utilAmtKey(id, ym);
+    if (rec.water === '' && rec.elec === '' && rec.gas === '') delete u.amt[key];
+    else u.amt[key] = rec;
+    const total = (Number(rec.water)||0) + (Number(rec.elec)||0) + (Number(rec.gas)||0);
+    const t = document.getElementById(`util-total-${id}`);
+    if (t) t.textContent = total.toLocaleString();
+  }
+  // メモ（折り畳みが閉じていても要素は存在する）
+  if (document.getElementById(`util-memo-water-${id}`)) {
+    const gm = k => document.getElementById(`util-memo-${k}-${id}`)?.value ?? '';
+    u.memo[id] = { water: gm('water'), elec: gm('elec'), gas: gm('gas'), note: gm('note') };
+  }
+  _setUtil(u); // クラウド保存は1回
+  if (btn) {
+    const orig = btn.dataset.orig || (btn.dataset.orig = btn.textContent);
+    btn.textContent = '保存しました ✓';
+    btn.style.background = '#2e7d32';
+    clearTimeout(btn._t);
+    btn._t = setTimeout(() => { btn.textContent = orig; btn.style.background = ''; }, 2500);
+  }
 }
 
 let _invEditingId = null;
